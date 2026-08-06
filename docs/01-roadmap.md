@@ -13,7 +13,8 @@ This is the master plan. Each phase ends with something measurable.
 | Odds rows | 1,376,205 incl. Pinnacle closing for all seasons |
 | xG (Understat) | On every match (43,178 stat rows) |
 | Ratings | 250,050 Elo periods (ClubElo + own elo_goals/elo_xg) |
-| Feature layer | Built, passed 4 independent leakage tests |
+| Feature layer | Built, passed 4 independent leakage tests — but measurably adds nothing to any model yet (`docs/04-phase2-feature-blend.md`) |
+| Blend harness | Built and tested, off by default; waiting on features worth blending |
 | Dixon-Coles 1X2 | Log-loss 0.98583 vs market 0.96031 — 76% of the base-rate-to-market gap closed |
 | Count models (corners/cards/fouls/shots) | In progress — totals-variance fix written, **not yet re-backtested** |
 | DB size | 402 MB of the 500 MB free tier |
@@ -68,7 +69,14 @@ Results and reasoning in `docs/02-phase1-count-markets.md`. In short:
   predictions. Improved log-loss in 202 of 218 cases, reliability in 188.
 - Analytic gradients cut a league backtest from 11m56s to 17s.
 
-### Phase 2 — ml schema + prediction pipeline
+### Phase 2 — ml schema + prediction pipeline — DONE
+Notes in `docs/03-phase2-notes.md`; the blend result in
+`docs/04-phase2-feature-blend.md`. The first four bullets shipped. The fifth was
+measured over ~80 configurations and **rejected**: the feature layer does not
+improve any market, because congestion is measured on league fixtures only and
+squad availability is not measured at all. The harness is kept and tested, so
+Phase 3/4 features can be evaluated the moment they exist.
+
 - Give Dixon-Coles the same analytic gradient treatment as the count models;
   one league currently takes 8.6 minutes, which makes tuning it impractical.
 - `ml.model` (registry, params, training window), `ml.prediction`
@@ -78,8 +86,8 @@ Results and reasoning in `docs/02-phase1-count-markets.md`. In short:
   A prediction is not reproducible without them.
 - A `footy predict` command that writes the full probability table per fixture:
   1X2, O/U 0.5–5.5 goals (match and per-team), BTTS, corners lines, cards lines.
-- Blend: Dixon-Coles / count models + gradient boosting over the feature layer;
-  walk-forward evaluation, log-loss and calibration vs closing odds.
+- ~~Blend: Dixon-Coles / count models + gradient boosting over the feature
+  layer~~ — built and rejected on the evidence; see above.
 
 ### Phase 3 — player layer (needs API-Football month)
 - New tables: `core.player` (+ `player_alias`), `core.appearance`
@@ -91,6 +99,10 @@ Results and reasoning in `docs/02-phase1-count-markets.md`. In short:
   congestion features even if we never predict those matches.
 
 ### Phase 4 — squad-strength and congestion features (user's points 1 & 2)
+These are now the *specific* features the blend was missing, which is the whole
+case for Phase 3 preceding them: `rest_days` currently ignores midweek European
+trips, and nothing anywhere records who is fit to play.
+
 - Lineup strength: share of season xG+xA contribution missing from today's
   lineup (sold / injured / rested), share of usual starting XI minutes present.
 - Congestion: days since last match, matches in last 7/14 days,

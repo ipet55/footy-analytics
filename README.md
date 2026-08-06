@@ -30,6 +30,7 @@ The system Python on macOS is 3.9 and too old; `uv` installs an isolated 3.12.
 
 .venv/bin/footy backtest                        # Dixon-Coles goals, vs closing odds
 .venv/bin/footy backtest-counts --stat fouls     # corners, cards, fouls, shots
+.venv/bin/footy blend-check                      # does the feature layer help? (no)
 
 .venv/bin/footy predict --as-of 2026-05-01 --days 7   # store probabilities for fixtures
 .venv/bin/footy show-predictions --market corners_home
@@ -92,7 +93,7 @@ fixtures not yet played.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest        # 47 tests, ~25s
+.venv/bin/python -m pytest        # 59 tests, ~30s
 ```
 
 The model tests check the analytic gradients against finite differences, because
@@ -100,7 +101,9 @@ a wrong gradient does not raise — it silently stops the optimiser short of the
 maximum likelihood. The leakage tests recompute feature values from scratch
 against the live database, and the prediction tests re-derive every published
 probability from its stored calibration. Both are skipped when `DATABASE_URL` is
-absent.
+absent. The blend tests pin the *mechanism* of a rejected experiment rather than
+its result, since a negative finding is only worth keeping if the thing that
+produced it demonstrably worked.
 
 ## Model status
 
@@ -125,6 +128,13 @@ so the application cannot publish a market that has not earned it. Predictions
 for all five leagues have been generated and settled end to end; see
 `docs/results/phase2-stored-predictions.md`, which also shows the residual biases
 tracking league-level drift rather than any failure to separate fixtures.
+
+Nothing above uses the feature layer. Gradient boosting over it was built and
+measured across ~80 configurations and improved no market, for a diagnosable
+reason: congestion is currently derived from league fixtures alone, and squad
+availability is not recorded at all. `docs/04-phase2-feature-blend.md` has the
+evidence. The harness stays in `src/footy/models/blend.py`, off by default, so
+that player and congestion data can be judged the moment it lands.
 
 ## Sources
 
