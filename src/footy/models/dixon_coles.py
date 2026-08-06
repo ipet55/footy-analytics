@@ -89,6 +89,138 @@ def btts_probability(matrix: np.ndarray) -> float:
     return float(matrix[1:, 1:].sum())
 
 
+@dataclass(frozen=True)
+class Design:
+    """A training set reduced to what the likelihood needs: teams as contiguous
+    indices, each match's time-decay weight, and the four low-score masks the
+    Dixon-Coles correction applies to, precomputed once instead of per iteration."""
+
+    teams: list[int]
+    index: dict[int, int]
+    home: np.ndarray
+    away: np.ndarray
+    home_goals: np.ndarray
+    away_goals: np.ndarray
+    weights: np.ndarray
+    m00: np.ndarray
+    m01: np.ndarray
+    m10: np.ndarray
+    m11: np.ndarray
+
+    @property
+    def n_teams(self) -> int:
+        return len(self.teams)
+
+
+def build_design(
+    home_ids: np.ndarray,
+    away_ids: np.ndarray,
+    home_goals: np.ndarray,
+    away_goals: np.ndarray,
+    days_ago: np.ndarray,
+    xi: float = 0.0018,
+) -> Design:
+    teams = sorted(set(home_ids.tolist()) | set(away_ids.tolist()))
+    index = {team: i for i, team in enumerate(teams)}
+    return Design(
+        teams=teams,
+        index=index,
+        home=np.array([index[t] for t in home_ids]),
+        away=np.array([index[t] for t in away_ids]),
+        home_goals=np.asarray(home_goals, float),
+        away_goals=np.asarray(away_goals, float),
+        weights=np.exp(-xi * days_ago),
+        m00=(home_goals == 0) & (away_goals == 0),
+        m01=(home_goals == 0) & (away_goals == 1),
+        m10=(home_goals == 1) & (away_goals == 0),
+        m11=(home_goals == 1) & (away_goals == 1),
+    )
+
+
+def unpack(params: np.ndarray, n: int) -> tuple[np.ndarray, np.ndarray, float, float]:
+    attack = np.empty(n)
+    # Attack strengths are only identified up to a constant, so the last is
+    # pinned to make the mean zero rather than left free.
+    attack[: n - 1] = params[: n - 1]
+    attack[n - 1] = -params[: n - 1].sum()
+    defence = params[n - 1 : 2 * n - 1]
+    return attack, defence, params[-2], params[-1]
+
+
+def objective(params: np.ndarray, d: Design) -> tuple[float, np.ndarray]:
+    """Negative log-likelihood and its gradient.
+
+    Supplying the derivatives rather than letting L-BFGS-B estimate them costs
+    one extra likelihood evaluation per parameter per iteration, and there are
+    2n+1 parameters for n teams. On the Premier League this is the difference
+    between a walk-forward backtest taking minutes and taking seconds.
+
+    Both Poisson rates enter through their logarithms, where the derivative of
+    the uncorrected likelihood is just the residual, goals minus expected goals.
+    The rho correction only touches four scorelines, so its contribution is
+    assembled per mask.
+    """
+    n = d.n_teams
+    attack, defence, home_adv, rho = unpack(params, n)
+    lam = np.clip(np.exp(attack[d.home] + defence[d.away] + home_adv), 1e-8, 30.0)
+    mu = np.clip(np.exp(attack[d.away] + defence[d.home]), 1e-8, 30.0)
+
+    tau = np.ones_like(lam)
+    tau[d.m00] = 1.0 - lam[d.m00] * mu[d.m00] * rho
+    tau[d.m01] = 1.0 + lam[d.m01] * rho
+    tau[d.m10] = 1.0 + mu[d.m10] * rho
+    tau[d.m11] = 1.0 - rho
+    if np.any(tau <= 0):
+        # This rho implies a negative probability for some observed scoreline.
+        # Report it as terrible and point the gradient back toward rho = 0,
+        # which is always feasible, rather than returning a flat gradient the
+        # optimiser would mistake for a minimum.
+        grad = np.zeros_like(params)
+        grad[-1] = 1e3 if rho > 0 else -1e3
+        return 1e10, grad
+
+    ll = (
+        d.home_goals * np.log(lam) - lam
+        + d.away_goals * np.log(mu) - mu
+        + np.log(tau)
+    )
+    value = float(-np.sum(d.weights * ll))
+
+    # d log(tau) / d log(lam), d log(tau) / d log(mu), d log(tau) / d rho.
+    dtau_dloglam = np.zeros_like(lam)
+    dtau_dlogmu = np.zeros_like(lam)
+    dtau_drho = np.zeros_like(lam)
+    joint = lam[d.m00] * mu[d.m00] * rho
+    dtau_dloglam[d.m00] = -joint
+    dtau_dlogmu[d.m00] = -joint
+    dtau_drho[d.m00] = -lam[d.m00] * mu[d.m00]
+    dtau_dloglam[d.m01] = lam[d.m01] * rho
+    dtau_drho[d.m01] = lam[d.m01]
+    dtau_dlogmu[d.m10] = mu[d.m10] * rho
+    dtau_drho[d.m10] = mu[d.m10]
+    dtau_drho[d.m11] = -1.0
+
+    gl = d.weights * (d.home_goals - lam + dtau_dloglam / tau)
+    gm = d.weights * (d.away_goals - mu + dtau_dlogmu / tau)
+
+    grad = np.zeros_like(params)
+    # A team's attack drives the goals it scores at either venue; its defence
+    # drives the goals its opponent scores. Hence the crossed group sums.
+    attack_grad = (
+        np.bincount(d.home, weights=gl, minlength=n)
+        + np.bincount(d.away, weights=gm, minlength=n)
+    )
+    defence_grad = (
+        np.bincount(d.away, weights=gl, minlength=n)
+        + np.bincount(d.home, weights=gm, minlength=n)
+    )
+    grad[: n - 1] = -(attack_grad[: n - 1] - attack_grad[n - 1])
+    grad[n - 1 : 2 * n - 1] = -defence_grad
+    grad[-2] = -gl.sum()  # home advantage shifts only the home rate
+    grad[-1] = -float(np.sum(d.weights * dtau_drho / tau))
+    return value, grad
+
+
 def fit(
     home_ids: np.ndarray,
     away_ids: np.ndarray,
@@ -103,50 +235,8 @@ def fit(
     a year, which is the range Dixon and Coles found and a reasonable default
     before tuning.
     """
-    teams = sorted(set(home_ids.tolist()) | set(away_ids.tolist()))
-    index = {team: i for i, team in enumerate(teams)}
-    n = len(teams)
-
-    hi = np.array([index[t] for t in home_ids])
-    ai = np.array([index[t] for t in away_ids])
-    weights = np.exp(-xi * days_ago)
-
-    def unpack(params: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, float]:
-        attack = np.empty(n)
-        # Attack strengths are only identified up to a constant, so the last is
-        # pinned to make the mean zero rather than left free.
-        attack[: n - 1] = params[: n - 1]
-        attack[n - 1] = -params[: n - 1].sum()
-        defence = params[n - 1 : 2 * n - 1]
-        return attack, defence, params[-2], params[-1]
-
-    def negative_log_likelihood(params: np.ndarray) -> float:
-        attack, defence, home_adv, rho = unpack(params)
-        lam = np.exp(attack[hi] + defence[ai] + home_adv)
-        mu = np.exp(attack[ai] + defence[hi])
-        lam = np.clip(lam, 1e-8, 30.0)
-        mu = np.clip(mu, 1e-8, 30.0)
-
-        ll = (
-            home_goals * np.log(lam) - lam
-            + away_goals * np.log(mu) - mu
-        )
-
-        # Dixon-Coles correction, applied only to the four affected scorelines.
-        tau = np.ones_like(lam)
-        m00 = (home_goals == 0) & (away_goals == 0)
-        m01 = (home_goals == 0) & (away_goals == 1)
-        m10 = (home_goals == 1) & (away_goals == 0)
-        m11 = (home_goals == 1) & (away_goals == 1)
-        tau[m00] = 1.0 - lam[m00] * mu[m00] * rho
-        tau[m01] = 1.0 + lam[m01] * rho
-        tau[m10] = 1.0 + mu[m10] * rho
-        tau[m11] = 1.0 - rho
-        # A parameter set implying a negative probability is infeasible.
-        if np.any(tau <= 0):
-            return 1e10
-        ll = ll + np.log(tau)
-        return float(-np.sum(weights * ll))
+    d = build_design(home_ids, away_ids, home_goals, away_goals, days_ago, xi)
+    n = d.n_teams
 
     start = np.concatenate([
         np.zeros(n - 1),      # attack, minus the pinned one
@@ -160,10 +250,11 @@ def fit(
         + [(-1.0, 1.0), (-0.2, 0.2)]
     )
     result = minimize(
-        negative_log_likelihood, start, method="L-BFGS-B", bounds=bounds,
+        objective, start, args=(d,), method="L-BFGS-B", jac=True, bounds=bounds,
         options={"maxiter": 400, "ftol": 1e-9},
     )
-    attack, defence, home_adv, rho = unpack(result.x)
+    attack, defence, home_adv, rho = unpack(result.x, n)
+    teams, index = d.teams, d.index
     return Fitted(
         teams=teams,
         attack={t: float(attack[index[t]]) for t in teams},
