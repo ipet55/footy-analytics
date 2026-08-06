@@ -90,10 +90,22 @@ makes a number on the page reproducible.
 `ml.prediction_scored` joins predictions to what happened, with `hit` null for
 fixtures not yet played.
 
+## The app
+
+```bash
+cd web && cp .env.example .env.local && npm install && npm run dev
+```
+
+Fixture list, a match page showing every published market against the closing
+price, and a calibration page. It reads the nine views in `public` and cannot
+reach anything else: `anon` has no access to `core`, `ml`, `features` or `raw`,
+so a held market or an uncalibrated probability cannot be rendered even by
+mistake. Details in `web/README.md`.
+
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest        # 59 tests, ~30s
+.venv/bin/python -m pytest        # 69 tests, ~40s
 ```
 
 The model tests check the analytic gradients against finite differences, because
@@ -103,7 +115,8 @@ against the live database, and the prediction tests re-derive every published
 probability from its stored calibration. Both are skipped when `DATABASE_URL` is
 absent. The blend tests pin the *mechanism* of a rejected experiment rather than
 its result, since a negative finding is only worth keeping if the thing that
-produced it demonstrably worked.
+produced it demonstrably worked. The public-surface tests measure what the
+`anon` role can actually read, which is the claim the security posture rests on.
 
 ## Model status
 

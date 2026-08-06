@@ -89,7 +89,28 @@ Phase 3/4 features can be evaluated the moment they exist.
 - ~~Blend: Dixon-Coles / count models + gradient boosting over the feature
   layer~~ — built and rejected on the evidence; see above.
 
+### Phase 6/7 (partly done, out of order) — public views + the web app
+Built early, ahead of the player layer, because nine validated markets were
+sitting in a database with no way to look at them, and squeezing another point
+of log-loss is worth less than being able to see what already works.
+- `public` views are live: fixtures, markets, predictions with settled results,
+  de-vigged market prices, form, head to head, track record. They are the access
+  control — `anon` can read those nine views and nothing else, asserted in
+  `tests/test_public_surface.py`.
+- Next.js app in `web/`: fixture list, match page with the model against the
+  closing price, and a calibration page.
+- Still to do here: the GitHub Actions cron that keeps fixtures and predictions
+  fresh, and the generated per-fixture summary.
+
 ### Phase 3 — player layer (needs API-Football month)
+Before paying: run the free upper-bound test. Understat publishes per-player
+xG, xA and minutes for every match since 2014, which gives the *actual* lineup
+retrospectively. Building squad-strength features from the real lineup is
+deliberately unfair to a live system, which would only know it an hour before
+kickoff — and that is the point. If knowing the true lineup does not improve the
+models, no injury feed or announced-lineup API can, and the month need never be
+bought. If it does, the size of the prize is known before spending anything.
+
 - New tables: `core.player` (+ `player_alias`), `core.appearance`
   (match, player, minutes, position, goals, assists, cards),
   `core.injury`, `core.transfer`, `core.manager` + spells.
