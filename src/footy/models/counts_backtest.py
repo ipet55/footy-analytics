@@ -162,7 +162,7 @@ def _referees(history: list[CountMatch], spec: cm.CountSpec) -> np.ndarray | Non
 
 
 @dataclass
-class _Models:
+class Models:
     """The fitted pair for one refit. The direct total model and the per-team
     model answer different questions, so both are kept."""
 
@@ -187,14 +187,20 @@ class _Models:
         return out
 
 
-def _fit_models(
+def fit_models(
     history: list[CountMatch], asof: date, spec: cm.CountSpec, xi: float | None
-) -> _Models:
+) -> Models:
+    """Fit both count models on `history`, decaying each match from `asof`.
+
+    Public because the prediction path fits exactly the same way; sharing this
+    is what guarantees a published probability comes from the same procedure the
+    backtest validated.
+    """
     home_ids = np.array([h.home_id for h in history])
     away_ids = np.array([h.away_id for h in history])
     days_ago = np.array([(asof - h.kickoff).days for h in history], float)
     referees = _referees(history, spec)
-    return _Models(
+    return Models(
         total=cm.fit_total(
             home_ids, away_ids, np.array([h.total for h in history], float),
             days_ago, spec, referee_ids=referees, xi=xi,
@@ -212,6 +218,7 @@ def run(
     stat: str,
     competition: str = "ENG-PL",
     test_from: date = date(2022, 7, 1),
+    test_to: date | None = None,
     xi: float | None = None,
     refit_every_days: int = 30,
     min_train: int = 500,
@@ -219,9 +226,19 @@ def run(
     warmup_matches: int = 400,
     base_window: int = 380,
 ) -> Backtest:
+    """Walk forward over [test_from, test_to).
+
+    `test_to` bounds the window for the same reason it does for goals — a
+    setting chosen on the matches it is reported on has seen the answer — and it
+    is also what lets the prediction path reuse this walk-forward to derive its
+    recalibration from history strictly before the fixtures being predicted.
+    """
     spec = cm.SPECS[stat]
     matches = load(stat, competition)
-    test = [m for m in matches if m.kickoff >= test_from]
+    test = [
+        m for m in matches
+        if m.kickoff >= test_from and (test_to is None or m.kickoff < test_to)
+    ]
     train_all = [m for m in matches if m.kickoff < test_from]
     if not test:
         raise RuntimeError(f"no {stat} matches in {competition} on or after {test_from}")
@@ -276,7 +293,7 @@ def run(
         res.predicted.append(p)
         res.actual.append(int(happened))
 
-    models: _Models | None = None
+    models: Models | None = None
     recal: dict[tuple[str, float], cal.Recalibrator] = {}
     last_fit: date | None = None
     # The recalibration is fitted on the predictions this same model already
@@ -298,7 +315,7 @@ def run(
         if last_fit is None or (m.kickoff - last_fit) >= timedelta(days=refit_every_days):
             history = [h for h in matches if h.kickoff < m.kickoff]
             if len(history) >= min_train:
-                models = _fit_models(history, m.kickoff, spec, xi)
+                models = fit_models(history, m.kickoff, spec, xi)
                 last_fit = m.kickoff
                 out.n_refits += 1
                 if warmed_up:
