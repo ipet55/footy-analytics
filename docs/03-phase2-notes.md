@@ -98,6 +98,14 @@ update that repoints a row. A leaked prediction that has already been published
 has already done its damage, so this is checked on write rather than audited
 afterwards.
 
+The trigger's `search_path` is pinned empty (`0011`). With a mutable one, the
+caller chooses which tables the names inside the function resolve to, so a table
+called `match` placed ahead of `core.match` could feed the guard a kickoff date
+of its choosing — defeating the invariant the database exists to enforce
+independently of the application. Supabase's linter still reports three
+pre-existing `core` functions with the same warning; they are in the ingestion
+path and worth pinning separately, rather than as a side effect of this work.
+
 ## `footy predict`
 
 Fits as of a date, predicts the fixtures that follow it, stores both

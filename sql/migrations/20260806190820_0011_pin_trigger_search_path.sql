@@ -1,0 +1,15 @@
+-- ============================================================
+-- Pin the leakage guard's schema resolution.
+--
+-- With a mutable search_path, whoever calls the trigger decides
+-- which tables the names inside it resolve to. A caller could
+-- put a table called `match` in front of core.match and have the
+-- guard read a kickoff date of their choosing, which would
+-- quietly defeat the one invariant the database is supposed to
+-- enforce no matter what the application does.
+--
+-- An empty search_path removes the question: every name must be
+-- fully qualified, and this function already qualifies both of
+-- the tables it reads.
+-- ============================================================
+alter function ml.assert_prediction_is_out_of_sample() set search_path = '';
