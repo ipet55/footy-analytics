@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+/* A fixed dark palette rather than a light/dark pair. This is a dense numeric
+   interface — probability tables read against odds — and one tuned set of
+   contrasts is easier to keep legible than two. */
+:root {
+  --background: #0b0f14;
+  --surface: #121821;
+  --surface-raised: #18202b;
+  --border: #223040;
+  --foreground: #e8eef6;
+  --muted: #8ba0b8;
+  --accent: #38bdf8;
+  --edge-positive: #34d399;
+  --edge-negative: #fb7185;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-edge-positive: var(--edge-positive);
+  --color-edge-negative: var(--edge-negative);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Percentages are compared down a column, so they must align on the digit
+   rather than on the glyph width. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
