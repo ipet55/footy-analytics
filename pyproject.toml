@@ -17,6 +17,11 @@ dependencies = [
 enrich = [
     "soccerdata>=1.8",
 ]
+model = [
+    "numpy>=2.0",
+    "scipy>=1.14",
+    "scikit-learn>=1.5",
+]
 
 [project.scripts]
 footy = "footy.cli:app"

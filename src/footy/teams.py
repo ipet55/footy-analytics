@@ -138,6 +138,48 @@ SHORT_NAME: dict[str, str] = {
 }
 
 
+# Understat names that resolve neither to a canonical name nor to a spelling
+# football-data.co.uk already registered. Most of its 167 names matched
+# automatically; these are the remainder, and each is unambiguous. Several are
+# German clubs where Understat writes the umlaut as "ue" — norm_name strips
+# accents but does not transliterate, so "Fuerth" and "Furth" do not collide.
+UNDERSTAT_ALIASES: dict[str, str] = {
+    "Clermont Foot": "Clermont",
+    "Borussia M.Gladbach": "Borussia Monchengladbach",
+    "FC Cologne": "FC Koln",
+    "FC Heidenheim": "Heidenheim",
+    "Fortuna Duesseldorf": "Fortuna Dusseldorf",
+    "Greuther Fuerth": "Greuther Furth",
+    "Nuernberg": "Nurnberg",
+    "RasenBallsport Leipzig": "RB Leipzig",
+    "Parma Calcio 1913": "Parma",
+    "SPAL 2013": "SPAL",
+}
+
+
+# ClubElo tracks exactly the same 167 top-flight clubs; 151 matched automatically
+# through a canonical name or an alias another source had already registered.
+# These 16 use short forms or German "ue" transliteration.
+CLUBELO_ALIASES: dict[str, str] = {
+    "Forest": "Nottingham Forest",
+    "Evian TG": "Evian Thonon Gaillard",
+    "Gazelec": "GFC Ajaccio",
+    "Bayern": "Bayern Munich",
+    "Duesseldorf": "Fortuna Dusseldorf",
+    "Frankfurt": "Eintracht Frankfurt",
+    "Fuerth": "Greuther Furth",
+    "Gladbach": "Borussia Monchengladbach",
+    "Holstein": "Holstein Kiel",
+    "Koeln": "FC Koln",
+    "Schalke": "Schalke 04",
+    "Werder": "Werder Bremen",
+    "Atletico": "Atletico Madrid",
+    "Bilbao": "Athletic Club",
+    "Depor": "Deportivo La Coruna",
+    "Gijon": "Sporting Gijon",
+}
+
+
 def canonical(source_name: str) -> str:
     return CANONICAL_NAME.get(source_name.strip(), source_name.strip())
 

@@ -49,7 +49,7 @@ def main() -> int:
         try:
             with psycopg.connect(dsn, connect_timeout=10) as conn, conn.cursor() as cur:
                 cur.execute("select 1")
-        except Exception as exc:  # noqa: BLE001 - we want to report and try the next one
+        except Exception as exc:  # report and try the next candidate
             print(f"  {label:<26} {host}\n      -> {type(exc).__name__}: {str(exc).strip().splitlines()[0][:90]}")
             continue
 

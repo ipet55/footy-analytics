@@ -120,6 +120,187 @@ def load_cmd(
     )
 
 
+@app.command("load-xg")
+def load_xg(
+    season: int | None = typer.Option(None, help="Load only this starting year."),
+    competition: str | None = typer.Option(None, help="Load only this code, e.g. ENG-PL."),
+):
+    """Fetch Understat xG and write it onto the match rows that already exist."""
+    from footy.load import understat as us_load
+    from footy.sources import understat as us
+
+    comps = [competition] if competition else list(us.LEAGUES)
+    years = [season] if season else config.SEASON_START_YEARS
+
+    console.print(f"Fetching {len(comps) * len(years)} league-seasons from Understat...")
+    seasons = []
+    for comp in comps:
+        for year in years:
+            seasons.append(us.fetch_season(comp, year))
+    console.print(f"  {sum(len(s.matches) for s in seasons):,} matches fetched")
+
+    with db.connect() as conn:
+        added, unresolved = us_load.register_aliases(conn, seasons)
+        console.print(f"Identity layer: {added} Understat aliases registered")
+        if unresolved:
+            console.print(f"[red]{len(unresolved)} names could not be resolved:[/red]")
+            for name, country in unresolved:
+                console.print(f"    {name}  ({country})")
+            console.print(
+                "Add them to UNDERSTAT_ALIASES in src/footy/teams.py, then re-run. "
+                "They are also queued in core.unresolved_alias."
+            )
+            raise typer.Exit(1)
+
+        run_id = db.start_run(conn, us.SOURCE_CODE, "match_xg",
+                              {"seasons": years, "competitions": comps})
+        conn.commit()
+
+        total = drift = disputes = 0
+        try:
+            for s in seasons:
+                updated, dd, disp = us_load.load_season(conn, s)
+                conn.commit()
+                total += updated
+                drift += dd
+                disputes += disp
+                note = f"  [yellow]{disp} score dispute(s)[/yellow]" if disp else ""
+                console.print(
+                    f"  {s.competition_code} {s.start_year}: {updated} stat rows enriched{note}"
+                )
+        except Exception as exc:
+            conn.rollback()
+            db.finish_run(conn, run_id, "failed", error=str(exc)[:2000])
+            conn.commit()
+            raise
+
+        db.finish_run(conn, run_id, "success", rows_written=total)
+        conn.commit()
+
+    console.print(f"\n[green]Enriched {total:,} stat rows with xG[/green]")
+    if drift:
+        console.print(f"[yellow]{drift} fixtures differ by >2 days between sources[/yellow]")
+    if disputes:
+        console.print(
+            f"[yellow]{disputes} score disagreement(s) recorded in core.result_dispute[/yellow]"
+        )
+
+
+@app.command("load-elo")
+def load_elo():
+    """Fetch ClubElo rating histories and load them into core.team_rating."""
+    from datetime import date
+
+    from footy.load import clubelo as ce_load
+    from footy.sources import clubelo as ce
+
+    with db.connect() as conn:
+        # Club names are only discovered once. On a resume they come back out of
+        # the identity layer, which avoids 12 more requests to a host that is
+        # already shedding load.
+        known = {
+            r[0]: r[1]
+            for r in db.fetch_all(
+                conn,
+                """
+                select a.alias_name, t.country
+                  from core.team_alias a
+                  join core.source s on s.source_id = a.source_id and s.code = %s
+                  join core.team t on t.team_id = a.team_id
+                """,
+                (ce.SOURCE_CODE,),
+            )
+        }
+        if known:
+            clubs = known
+            console.print(f"Using {len(clubs)} ClubElo clubs already in the identity layer")
+        else:
+            console.print("Discovering ClubElo clubs...")
+            clubs = ce_load.discover_clubs(range(config.SEASON_START_YEARS[0], 2026))
+            console.print(f"  {len(clubs)} top-flight clubs across the 5 countries")
+            added, unresolved = ce_load.register_aliases(conn, clubs)
+            console.print(f"Identity layer: {added} ClubElo aliases registered")
+            if unresolved:
+                console.print(f"[red]{len(unresolved)} names could not be resolved:[/red]")
+                for name, country in unresolved:
+                    console.print(f"    {name}  ({country})")
+                console.print("Add them to CLUBELO_ALIASES in src/footy/teams.py, then re-run.")
+                raise typer.Exit(1)
+
+        # Resume rather than refetch: a club with no rating rows is one that
+        # previously timed out, and the API is slow enough that this matters.
+        already = {
+            r[0]
+            for r in db.fetch_all(
+                conn,
+                """
+                select a.alias_name
+                  from core.team_alias a
+                  join core.source s on s.source_id = a.source_id and s.code = %s
+                 where exists (select 1 from core.team_rating tr
+                                where tr.team_id = a.team_id
+                                  and tr.source_id = a.source_id)
+                """,
+                (ce.SOURCE_CODE,),
+            )
+        }
+        todo = sorted(set(clubs) - already)
+        if already:
+            console.print(f"  {len(already)} clubs already loaded, fetching {len(todo)}")
+        if not todo:
+            console.print("[green]All clubs already have ratings.[/green]")
+            raise typer.Exit(0)
+
+        console.print(f"Fetching {len(todo)} rating histories (the API is slow)...")
+        since = date(config.SEASON_START_YEARS[0], 7, 1)
+        histories = ce.team_histories(todo, since=since)
+        failed = [c for c, rows in histories.items() if not rows]
+        fetched = sum(len(v) for v in histories.values())
+        console.print(f"  {fetched:,} rating periods fetched, {len(failed)} clubs failed")
+        if failed:
+            console.print(f"  [yellow]failed: {', '.join(failed[:10])}[/yellow]")
+
+        run_id = db.start_run(conn, ce.SOURCE_CODE, "team_rating", {"clubs": len(clubs)})
+        conn.commit()
+        written = ce_load.load_ratings(conn, histories)
+        db.finish_run(conn, run_id, "success", rows_read=fetched, rows_written=written)
+        conn.commit()
+
+    console.print(f"\n[green]Loaded {written:,} rating periods into core.team_rating[/green]")
+
+
+@app.command("build-elo")
+def build_elo(
+    variant: str | None = typer.Option(None, help="elo_goals or elo_xg. Both if omitted."),
+    k: float = typer.Option(20.0, help="Elo K factor."),
+    home_advantage: float = typer.Option(65.0, help="Home advantage in Elo points."),
+    season_regression: float = typer.Option(0.25, help="Regression to the mean between seasons."),
+):
+    """Compute Elo ratings from stored results. No external API involved."""
+    from footy.load import elo as elo_load
+    from footy.ratings import EloParams
+
+    params = EloParams(k=k, home_advantage=home_advantage, season_regression=season_regression)
+    variants = [variant] if variant else list(elo_load.VARIANTS)
+
+    with db.connect() as conn:
+        for name in variants:
+            console.print(f"Computing {name} (K={k}, HA={home_advantage}, "
+                          f"regression={season_regression})...")
+            written = elo_load.build(conn, name, params)
+            conn.commit()
+            overlaps = elo_load.check_no_overlaps(conn, name)
+            console.print(f"  {written:,} rating periods written")
+            if overlaps:
+                console.print(f"  [red]{overlaps} overlapping ranges — as-of lookups "
+                              f"would return more than one rating[/red]")
+                raise typer.Exit(1)
+            console.print("  [green]no overlapping ranges[/green]")
+            console.print(f"  strongest teams now on {name}:")
+            for team, country, rating in elo_load.latest(conn, name, limit=5):
+                console.print(f"    {float(rating):7.1f}  {team} ({country})")
+
+
 @app.command()
 def verify():
     """Integrity and coverage report over what is actually in the database."""
