@@ -161,14 +161,14 @@ def _d_loglik_d_log_r(y: np.ndarray, mu: np.ndarray, r: float) -> np.ndarray:
     )
 
 
-def _negative_binomial_loglik(y: np.ndarray, mu: np.ndarray, r: float) -> np.ndarray:
+def negative_binomial_loglik(y: np.ndarray, mu: np.ndarray, r: float) -> np.ndarray:
     return (
         gammaln(y + r) - gammaln(r) - gammaln(y + 1)
         + r * np.log(r / (r + mu)) + y * np.log(mu / (r + mu))
     )
 
 
-def _poisson_loglik(y: np.ndarray, mu: np.ndarray) -> np.ndarray:
+def poisson_loglik(y: np.ndarray, mu: np.ndarray) -> np.ndarray:
     return y * np.log(mu) - mu - gammaln(y + 1)
 
 
@@ -312,9 +312,9 @@ def total_objective(
     mu = np.clip(np.exp(intercept + tempo[d.home] + tempo[d.away] + ref_term), 1e-8, 300.0)
 
     ll = (
-        _poisson_loglik(totals, mu)
+        poisson_loglik(totals, mu)
         if dispersion is None
-        else _negative_binomial_loglik(totals, mu, dispersion)
+        else negative_binomial_loglik(totals, mu, dispersion)
     )
     penalty = d.referee_penalty * float(np.sum(ref_effects**2))
     value = float(-np.sum(d.weights * ll) + penalty)
@@ -418,11 +418,11 @@ def count_objective(
     mu_away = np.clip(np.exp(attack[d.away] + concede[d.home] + ref_term), 1e-8, 200.0)
 
     if dispersion is None:
-        ll = _poisson_loglik(home_counts, mu_home) + _poisson_loglik(away_counts, mu_away)
+        ll = poisson_loglik(home_counts, mu_home) + poisson_loglik(away_counts, mu_away)
     else:
-        ll = _negative_binomial_loglik(
+        ll = negative_binomial_loglik(
             home_counts, mu_home, dispersion
-        ) + _negative_binomial_loglik(away_counts, mu_away, dispersion)
+        ) + negative_binomial_loglik(away_counts, mu_away, dispersion)
     penalty = d.referee_penalty * float(np.sum(ref_effects**2))
     value = float(-np.sum(d.weights * ll) + penalty)
 

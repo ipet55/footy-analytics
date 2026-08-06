@@ -26,12 +26,27 @@ from datetime import date, timedelta
 import numpy as np
 
 from footy import db
+from footy.models import blend as bl
 from footy.models import calibration as cal
 from footy.models import counts as cm
 
 # Scopes are named once here because they key the results and drive the report.
 RAW_SCOPES = ("total", "convolved", "home", "away")
-CALIBRATED = {s: f"{s} calibrated" for s in RAW_SCOPES}
+BLEND_SCOPES = ("total blend", "home blend", "away blend")
+CALIBRATED = {s: f"{s} calibrated" for s in RAW_SCOPES + BLEND_SCOPES}
+
+
+def observable(scope: str) -> str:
+    """The quantity a scope is scored against: 'total', 'home' or 'away'.
+
+    Scope names carry two independent decorations — whether the probability was
+    recalibrated, and whether the feature blend produced it — but every variant
+    of a market is settled against the same observed number. Deriving that here
+    keeps the benchmark, the outcome and the accumulated calibration history
+    from drifting apart as variants are added.
+    """
+    plain = scope.replace(" calibrated", "").replace(" blend", "")
+    return "total" if plain == "convolved" else plain
 
 
 @dataclass
@@ -49,8 +64,9 @@ class CountMatch:
         return self.home_count + self.away_count
 
     def observed(self, scope: str) -> float:
-        return self.home_count if scope == "home" else (
-            self.away_count if scope == "away" else self.total
+        which = observable(scope)
+        return self.home_count if which == "home" else (
+            self.away_count if which == "away" else self.total
         )
 
 
@@ -168,9 +184,22 @@ class Models:
 
     total: cm.FittedTotal
     team: cm.FittedCount
+    corrections: bl.Corrections | None = None
+
+    def base_rates(self, m: CountMatch) -> dict[str, float]:
+        home_rate, away_rate = self.team.rates(m.home_id, m.away_id, m.referee_id)
+        return {
+            "total": self.total.rate(m.home_id, m.away_id, m.referee_id),
+            "home": home_rate,
+            "away": away_rate,
+        }
 
     def probabilities(
-        self, m: CountMatch, spec: cm.CountSpec, include_convolution: bool
+        self,
+        m: CountMatch,
+        spec: cm.CountSpec,
+        include_convolution: bool,
+        features: np.ndarray | None = None,
     ) -> dict[tuple[str, float], float]:
         total_pmf = self.total.pmf(m.home_id, m.away_id, m.referee_id)
         home_pmf, away_pmf = self.team.team_pmfs(m.home_id, m.away_id, m.referee_id)
@@ -184,23 +213,57 @@ class Models:
         for line in spec.team_lines:
             out[("home", line)] = cm.over_probability(home_pmf, line)
             out[("away", line)] = cm.over_probability(away_pmf, line)
+
+        if self.corrections is None or features is None:
+            return out
+
+        base = self.base_rates(m)
+        # The blend keeps each market's own support: a total ranges over twice
+        # what one side can produce, and scoring the two over different supports
+        # would make the comparison meaningless.
+        sizes = {
+            "total": 2 * cm.MAX_COUNT + 1,
+            "home": cm.MAX_COUNT + 1,
+            "away": cm.MAX_COUNT + 1,
+        }
+        lines = {
+            "total": spec.total_lines,
+            "home": spec.team_lines,
+            "away": spec.team_lines,
+        }
+        for scope in ("total", "home", "away"):
+            correction = self.corrections.get(scope)
+            if correction is None:
+                continue
+            rate = float(correction.rates(np.array([base[scope]]), features)[0])
+            pmf = bl.pmf_for_rate(rate, correction.dispersion, sizes[scope])
+            for line in lines[scope]:
+                out[(f"{scope} blend", line)] = cm.over_probability(pmf, line)
         return out
 
 
 def fit_models(
-    history: list[CountMatch], asof: date, spec: cm.CountSpec, xi: float | None
+    history: list[CountMatch],
+    asof: date,
+    spec: cm.CountSpec,
+    xi: float | None,
+    features: bl.Features | None = None,
 ) -> Models:
     """Fit both count models on `history`, decaying each match from `asof`.
 
     Public because the prediction path fits exactly the same way; sharing this
     is what guarantees a published probability comes from the same procedure the
     backtest validated.
+
+    When `features` is supplied, a boosted correction is fitted on top of each
+    fitted rate — on the same history, with the same time-decay weights, so the
+    blend cannot see anything the model it corrects could not.
     """
     home_ids = np.array([h.home_id for h in history])
     away_ids = np.array([h.away_id for h in history])
     days_ago = np.array([(asof - h.kickoff).days for h in history], float)
     referees = _referees(history, spec)
-    return Models(
+    models = Models(
         total=cm.fit_total(
             home_ids, away_ids, np.array([h.total for h in history], float),
             days_ago, spec, referee_ids=referees, xi=xi,
@@ -212,6 +275,28 @@ def fit_models(
             days_ago, spec, referee_ids=referees, xi=xi,
         ),
     )
+    if features is None:
+        return models
+
+    X = features.matrix([h.match_id for h in history])
+    weights = np.exp(-(spec.xi if xi is None else xi) * days_ago)
+    rates = [models.base_rates(h) for h in history]
+    targets = {
+        "total": np.array([h.total for h in history], float),
+        "home": np.array([h.home_count for h in history], float),
+        "away": np.array([h.away_count for h in history], float),
+    }
+    models.corrections = bl.Corrections(
+        **{
+            scope: bl.fit_correction(
+                X, targets[scope],
+                np.array([r[scope] for r in rates]),
+                weights, spec.negative_binomial,
+            )
+            for scope in ("total", "home", "away")
+        }
+    )
+    return models
 
 
 def run(
@@ -225,6 +310,7 @@ def run(
     include_convolution: bool = True,
     warmup_matches: int = 400,
     base_window: int = 380,
+    blend: bool = False,
 ) -> Backtest:
     """Walk forward over [test_from, test_to).
 
@@ -232,9 +318,15 @@ def run(
     setting chosen on the matches it is reported on has seen the answer — and it
     is also what lets the prediction path reuse this walk-forward to derive its
     recalibration from history strictly before the fixtures being predicted.
+
+    With `blend`, each fitted rate additionally gets a boosted correction from
+    the feature layer, scored as extra scopes alongside the model it corrects.
+    Both variants therefore see the same fixtures, the same benchmark and the
+    same calibration path, which is the only way the comparison means anything.
     """
     spec = cm.SPECS[stat]
     matches = load(stat, competition)
+    features = bl.load_features(competition) if blend else None
     test = [
         m for m in matches
         if m.kickoff >= test_from and (test_to is None or m.kickoff < test_to)
@@ -267,7 +359,7 @@ def run(
             [m.observed(scope) > line for m in matches], float
         )
         for scope, line in base
-        if scope != "convolved"
+        if scope == observable(scope)
     }
     position = {m.match_id: i for i, m in enumerate(matches)}
 
@@ -283,9 +375,11 @@ def run(
         res = out.results.get(key)
         if res is None:
             res = out.results[key] = LineResult(scope, line)
-        plain = scope.replace(" calibrated", "")
-        rate = base[(plain, line)]
-        recent = rolling_rate("total" if plain == "convolved" else plain, line, match)
+        # Every variant of a market is judged against the same benchmark as the
+        # market itself, so a blend cannot look good by being scored against an
+        # easier target than the model it is replacing.
+        rate = base[(observable(scope), line)]
+        recent = rolling_rate(observable(scope), line, match)
         res.n += 1
         res.model_ll -= np.log(_clip(p if happened else 1 - p))
         res.base_ll -= np.log(_clip(rate if happened else 1 - rate))
@@ -315,7 +409,7 @@ def run(
         if last_fit is None or (m.kickoff - last_fit) >= timedelta(days=refit_every_days):
             history = [h for h in matches if h.kickoff < m.kickoff]
             if len(history) >= min_train:
-                models = fit_models(history, m.kickoff, spec, xi)
+                models = fit_models(history, m.kickoff, spec, xi, features)
                 last_fit = m.kickoff
                 out.n_refits += 1
                 if warmed_up:
@@ -323,7 +417,8 @@ def run(
         if models is None:
             continue
 
-        probabilities = models.probabilities(m, spec, include_convolution)
+        row = features.matrix([m.match_id]) if features is not None else None
+        probabilities = models.probabilities(m, spec, include_convolution, row)
         for key, p in probabilities.items():
             seen.setdefault(key, []).append((p, int(m.observed(key[0]) > key[1])))
 
@@ -352,6 +447,7 @@ def run(
 NOTES = {
     "convolved": "control: two independent sides added. Same mean, wrong spread.",
     "total calibrated": "the numbers that would be published.",
+    "total blend": "same rate, corrected by the feature layer.",
 }
 
 
@@ -359,8 +455,10 @@ def report(bt: Backtest, scopes: tuple[str, ...] | None = None) -> None:
     print(f"\n=== {bt.stat}, {bt.competition}: {bt.n_matches:,} matches scored, "
           f"{bt.n_refits} refits ===")
     order = scopes or (
-        "total", "total calibrated", "convolved",
-        "home", "home calibrated", "away", "away calibrated",
+        "total", "total calibrated", "total blend", "total blend calibrated",
+        "convolved",
+        "home", "home calibrated", "home blend", "home blend calibrated",
+        "away", "away calibrated", "away blend", "away blend calibrated",
     )
     for scope in order:
         rows = bt.scope(scope)
