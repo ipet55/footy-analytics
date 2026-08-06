@@ -301,6 +301,95 @@ def build_elo(
                 console.print(f"    {float(rating):7.1f}  {team} ({country})")
 
 
+@app.command("build-features")
+def build_features(
+    rebuild: bool = typer.Option(False, "--rebuild", help="Truncate and rebuild from scratch."),
+):
+    """Populate the feature layer from stored matches, ratings and odds."""
+    from footy.features import build as fb
+
+    with db.connect() as conn:
+        console.print("Building features (rolling windows stop at the previous fixture)...")
+        team_rows, match_rows = fb.build(conn, rebuild=rebuild)
+        conn.commit()
+    console.print(f"  features.team_match: {team_rows:,} rows")
+    console.print(f"  features.match:      {match_rows:,} rows")
+
+
+@app.command()
+def backtest(
+    competition: str = typer.Option("ENG-PL", help="Competition code, e.g. ENG-PL."),
+    test_from: str = typer.Option("2022-07-01", help="First kickoff date to score."),
+    xi: float = typer.Option(0.0018, help="Time-decay rate for match weights."),
+    refit_every_days: int = typer.Option(14, help="Days between refits."),
+):
+    """Walk-forward backtest of the Dixon-Coles goals model against closing odds."""
+    from datetime import date as _date
+
+    from footy.models import backtest as bt
+
+    scores = bt.run(
+        competition=competition,
+        test_from=_date.fromisoformat(test_from),
+        xi=xi,
+        refit_every_days=refit_every_days,
+    )
+    bt.report(scores, label=f"{competition} from {test_from}")
+
+
+@app.command("backtest-counts")
+def backtest_counts(
+    stat: str | None = typer.Option(
+        None, help="corners, cards, fouls or shots. All four if omitted."
+    ),
+    competition: str = typer.Option("ENG-PL", help="Competition code, e.g. ENG-PL."),
+    test_from: str = typer.Option("2022-07-01", help="First kickoff date to score."),
+    xi: float | None = typer.Option(
+        None, help="Time-decay rate. Defaults to the per-statistic value in SPECS."
+    ),
+    refit_every_days: int = typer.Option(30, help="Days between refits."),
+    no_convolution: bool = typer.Option(
+        False, "--no-convolution", help="Skip the convolution control to halve the output."
+    ),
+    warmup_matches: int = typer.Option(
+        400, help="Predictions to accumulate before the recalibration switches on."
+    ),
+    reliability: bool = typer.Option(
+        True, help="Also print reliability tables for the middle total line."
+    ),
+):
+    """Walk-forward backtest of the corner, card, foul and shot count markets."""
+    from datetime import date as _date
+
+    from footy.models import counts as cm
+    from footy.models import counts_backtest as cb
+
+    stats = [stat] if stat else list(cm.SPECS)
+    for name in stats:
+        if name not in cm.SPECS:
+            console.print(f"[red]unknown stat {name}; expected one of "
+                          f"{', '.join(cm.SPECS)}[/red]")
+            raise typer.Exit(1)
+
+    for name in stats:
+        console.print(f"\nFitting {name} for {competition} (walk-forward, this takes a while)...")
+        result = cb.run(
+            name,
+            competition=competition,
+            test_from=_date.fromisoformat(test_from),
+            xi=xi,
+            refit_every_days=refit_every_days,
+            include_convolution=not no_convolution,
+            warmup_matches=warmup_matches,
+        )
+        cb.report(result)
+        if reliability:
+            lines = sorted(cm.SPECS[name].total_lines)
+            middle = lines[len(lines) // 2]
+            cb.calibration_table(result, "total", middle)
+            cb.calibration_table(result, "total calibrated", middle)
+
+
 @app.command()
 def verify():
     """Integrity and coverage report over what is actually in the database."""

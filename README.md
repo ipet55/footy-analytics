@@ -22,6 +22,14 @@ The system Python on macOS is 3.9 and too old; `uv` installs an isolated 3.12.
 .venv/bin/footy parse     # parse and report counts without touching the database
 .venv/bin/footy load      # load results, team stats and odds into Supabase
 .venv/bin/footy verify    # integrity and coverage report
+
+.venv/bin/footy load-xg          # enrich matches with Understat xG
+.venv/bin/footy load-elo         # fetch ClubElo rating histories
+.venv/bin/footy build-elo        # compute own Elo variants from stored results
+.venv/bin/footy build-features   # populate the point-in-time feature layer
+
+.venv/bin/footy backtest                        # Dixon-Coles goals, vs closing odds
+.venv/bin/footy backtest-counts --stat fouls     # corners, cards, fouls, shots
 ```
 
 `load` is idempotent. Re-running it updates existing rows rather than duplicating
@@ -56,6 +64,35 @@ silent corruption.
 **Every row in `features` may only contain information that existed before its match
 kicked off.** Data leakage is what makes football models look excellent in backtests
 and lose money in production. It is the most common failure mode in this domain.
+
+## Tests
+
+```bash
+.venv/bin/python -m pytest        # 30 tests, ~15s
+```
+
+The model tests check the analytic gradients against finite differences, because
+a wrong gradient does not raise — it silently stops the optimiser short of the
+maximum likelihood. The leakage tests recompute feature values from scratch
+against the live database and are skipped when `DATABASE_URL` is absent.
+
+## Model status
+
+Validated walk-forward on 2022/23–2025/26, all five leagues. Detail in
+`docs/02-phase1-count-markets.md`.
+
+| Market | Benchmark beaten by | Status |
+|---|---|---|
+| 1X2 (Dixon-Coles) | closes 76% of the base-rate-to-market gap | baseline |
+| Fouls, match total | 5.4–6.5% | shipping |
+| Corners, per team | 1.9–6.3% | shipping |
+| Shots, match total | 0.8–4.5% | shipping |
+| Cards; per-team shots | 0.3–7.6% | held: percentages not accurate enough yet |
+| Corners, match total | ~0% | not shipping — no signal exists |
+
+Two rules the numbers imposed: published probabilities are always recalibrated,
+never raw; and markets are scored against a *rolling* frequency, because a fixed
+base rate flatters any model whenever a league drifts.
 
 ## Sources
 
