@@ -320,6 +320,9 @@ def build_features(
 def backtest(
     competition: str = typer.Option("ENG-PL", help="Competition code, e.g. ENG-PL."),
     test_from: str = typer.Option("2022-07-01", help="First kickoff date to score."),
+    test_to: str | None = typer.Option(
+        None, help="Stop before this date. Use to tune on one window and report on another."
+    ),
     xi: float = typer.Option(0.0018, help="Time-decay rate for match weights."),
     refit_every_days: int = typer.Option(14, help="Days between refits."),
 ):
@@ -331,10 +334,12 @@ def backtest(
     scores = bt.run(
         competition=competition,
         test_from=_date.fromisoformat(test_from),
+        test_to=_date.fromisoformat(test_to) if test_to else None,
         xi=xi,
         refit_every_days=refit_every_days,
     )
-    bt.report(scores, label=f"{competition} from {test_from}")
+    window = f"from {test_from}" + (f" to {test_to}" if test_to else "")
+    bt.report(scores, label=f"{competition} {window}")
 
 
 @app.command("backtest-counts")

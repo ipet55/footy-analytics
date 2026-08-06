@@ -90,12 +90,23 @@ def _clip(p: float) -> float:
 def run(
     competition: str = "ENG-PL",
     test_from: date = date(2022, 7, 1),
+    test_to: date | None = None,
     xi: float = 0.0018,
     refit_every_days: int = 14,
     min_train: int = 500,
 ) -> Scores:
+    """Walk forward over [test_from, test_to).
+
+    `test_to` exists so a hyperparameter can be chosen on one window and the
+    result reported on a later one. Tuning and reporting on the same matches
+    gives a number that cannot be trusted, however carefully the walk-forward
+    itself is done — the choice of setting has then seen the answer.
+    """
     matches = load_matches(competition)
-    test = [m for m in matches if m.kickoff >= test_from]
+    test = [
+        m for m in matches
+        if m.kickoff >= test_from and (test_to is None or m.kickoff < test_to)
+    ]
     if not test:
         raise RuntimeError("no matches in the test period")
 
