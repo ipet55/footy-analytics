@@ -396,6 +396,122 @@ def backtest_counts(
 
 
 @app.command()
+def predict(
+    competition: str = typer.Option("ENG-PL", help="Competition code, e.g. ENG-PL."),
+    as_of: str | None = typer.Option(
+        None,
+        help="Fit on matches before this date and predict from it. Defaults to today.",
+    ),
+    days: int = typer.Option(7, help="How far past the as-of date to predict."),
+    stat: str | None = typer.Option(
+        None, help="Restrict the count markets to one statistic."
+    ),
+    no_goals: bool = typer.Option(
+        False, "--no-goals", help="Skip the Dixon-Coles goals markets."
+    ),
+    calibration_window_days: int = typer.Option(
+        730, help="History replayed to derive the recalibration."
+    ),
+):
+    """Fit as of a date and store probabilities for the fixtures that follow it.
+
+    Point --as-of at a past matchday to check the output against results that
+    are already known; the models still only see matches played before it.
+    """
+    from datetime import date as _date
+    from datetime import timedelta
+
+    from footy.models import counts as cm
+    from footy.models import predict as pr
+
+    if stat is not None and stat not in cm.SPECS:
+        console.print(f"[red]unknown stat {stat}; expected one of "
+                      f"{', '.join(cm.SPECS)}[/red]")
+        raise typer.Exit(1)
+
+    when = _date.fromisoformat(as_of) if as_of else _date.today()
+    console.print(
+        f"Predicting {competition} for {days} days from {when} "
+        f"(fitting on matches before it, then replaying "
+        f"{calibration_window_days} days to calibrate)..."
+    )
+    written = pr.run(
+        competition=competition,
+        as_of=when,
+        days=days,
+        stats=(stat,) if stat else ("corners", "cards", "fouls", "shots"),
+        goals=not no_goals,
+        calibration_window_days=calibration_window_days,
+    )
+    if not written.fixtures:
+        console.print(f"[yellow]no fixtures between {when} and "
+                      f"{when + timedelta(days=days)}[/yellow]")
+        return
+    console.print(f"  fixtures:    {written.fixtures}")
+    console.print(f"  fits stored: {written.models}")
+    console.print(f"  predictions: {written.predictions:,}")
+    console.print(f"  calibrations:{written.calibrated_markets:>4}")
+    for note in written.skipped:
+        console.print(f"  [yellow]skipped {note}[/yellow]")
+
+
+@app.command("show-predictions")
+def show_predictions(
+    competition: str = typer.Option("ENG-PL", help="Competition code, e.g. ENG-PL."),
+    market: str = typer.Option("goals_1x2", help="Market code to display."),
+    limit: int = typer.Option(10, help="Fixtures to show."),
+    include_held: bool = typer.Option(
+        False, "--include-held", help="Show markets not yet cleared for publication."
+    ),
+):
+    """Print stored predictions, newest fixtures first, with results where known."""
+    with db.connect() as conn:
+        status = db.fetch_one(
+            conn, "select status from ml.market where market_code = %s", (market,)
+        )
+        if status is None:
+            console.print(f"[red]unknown market {market}[/red]")
+            raise typer.Exit(1)
+        if status[0] != "shipping" and not include_held:
+            console.print(
+                f"[yellow]{market} is marked '{status[0]}' and is not cleared for "
+                f"publication; pass --include-held to see it anyway[/yellow]"
+            )
+            return
+        rows = db.fetch_all(
+            conn,
+            """
+            select p.kickoff_date, h.canonical_name, a.canonical_name,
+                   p.line, p.selection, p.p_raw, p.p_calibrated, p.hit
+              from ml.prediction_scored p
+              join core.match m on m.match_id = p.match_id
+              join core.team h on h.team_id = m.home_team_id
+              join core.team a on a.team_id = m.away_team_id
+              join core.competition c on c.competition_id = p.competition_id
+                                     and c.code = %s
+             where p.market_code = %s
+             order by p.kickoff_date desc, m.match_id, p.line, p.selection
+             limit %s
+            """,
+            (competition, market, limit),
+        )
+    if not rows:
+        console.print(f"[yellow]no stored predictions for {market}[/yellow]")
+        return
+    console.print(f"\n[bold]{market}[/bold] ({status[0]})")
+    console.print(f"  {'date':<11} {'fixture':<34} {'sel':<5} {'raw':>7} "
+                  f"{'shown':>7}  result")
+    for kickoff, home, away, line, selection, raw, calibrated, hit in rows:
+        fixture = f"{home} v {away}"[:34]
+        label = f"{selection}" + (f" {line:g}" if line is not None else "")
+        result = "pending" if hit is None else ("hit" if hit else "miss")
+        console.print(
+            f"  {kickoff!s:<11} {fixture:<34} {label:<5} {float(raw):>6.1%} "
+            f"{float(calibrated):>6.1%}  {result}"
+        )
+
+
+@app.command()
 def verify():
     """Integrity and coverage report over what is actually in the database."""
     checks: list[tuple[str, str]] = [
