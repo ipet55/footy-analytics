@@ -395,6 +395,63 @@ def backtest_counts(
             cb.calibration_table(result, "total calibrated", middle)
 
 
+@app.command("blend-check")
+def blend_check(
+    stat: str | None = typer.Option(
+        None, help="corners, cards, fouls or shots. All four if omitted."
+    ),
+    competition: str | None = typer.Option(
+        None, help="Competition code. All five if omitted."
+    ),
+    scope: str = typer.Option("total", help="total, home or away."),
+    in_sample_offset: bool = typer.Option(
+        False,
+        "--in-sample-offset",
+        help="Train the correction on the base model's own fitted rates, which "
+             "measures its overfitting rather than the features.",
+    ),
+):
+    """Ask whether the feature layer improves the count models. It currently does not.
+
+    Regenerates the comparison behind docs/04-phase2-feature-blend.md, which
+    rejected the blend. Kept runnable because that document makes a claim, and
+    because it is the harness for the next attempt: once congestion and squad
+    availability are real features rather than league-only rest days, this
+    command is what says whether they were worth buying.
+    """
+    from footy.models import blend_check as bc
+    from footy.models import counts as cm
+
+    stats = (stat,) if stat else tuple(cm.SPECS)
+    for name in stats:
+        if name not in cm.SPECS:
+            console.print(f"[red]unknown stat {name}; expected one of "
+                          f"{', '.join(cm.SPECS)}[/red]")
+            raise typer.Exit(1)
+    if scope not in ("total", "home", "away"):
+        console.print(f"[red]unknown scope {scope}; expected total, home or away[/red]")
+        raise typer.Exit(1)
+
+    competitions = (competition,) if competition else bc.LEAGUES
+    console.print(
+        f"Comparing the blend against the plain models on "
+        f"{len(competitions) * len(stats)} league-market combinations. "
+        f"Each one refits the base model {'9 times' if not in_sample_offset else 'once'}, "
+        f"so this takes a few minutes..."
+    )
+    try:
+        results = bc.run(
+            stats=stats,
+            competitions=competitions,
+            scope=scope,
+            out_of_fold=not in_sample_offset,
+        )
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    bc.report(results)
+
+
 @app.command()
 def predict(
     competition: str = typer.Option("ENG-PL", help="Competition code, e.g. ENG-PL."),
