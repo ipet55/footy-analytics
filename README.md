@@ -30,7 +30,15 @@ The system Python on macOS is 3.9 and too old; `uv` installs an isolated 3.12.
 
 .venv/bin/footy backtest                        # Dixon-Coles goals, vs closing odds
 .venv/bin/footy backtest-counts --stat fouls     # corners, cards, fouls, shots
+
+.venv/bin/footy predict --as-of 2026-05-01 --days 7   # store probabilities for fixtures
+.venv/bin/footy show-predictions --market corners_home
 ```
+
+`predict` fits as of a date and predicts only what follows it. Pointing `--as-of`
+at a past matchday is how to check the output against results that are already
+known — the models still see nothing later than the date given, and the database
+refuses any prediction whose match falls inside its model's training window.
 
 `load` is idempotent. Re-running it updates existing rows rather than duplicating
 them, so it is safe to re-run after a partial failure or to refresh the current season:
@@ -48,7 +56,7 @@ Four schemas, in Supabase project `Football_Analysis` (`eu-west-1`):
 | `raw` | Immutable landing zone. Never edited — reprocess from here when parsing logic changes. |
 | `core` | Canonical, provider-agnostic model of the game. Single source of truth. |
 | `features` | Point-in-time-correct ML features. |
-| `ml` | Model registry, predictions, realised outcomes. |
+| `ml` | Model registry, calibrations, predictions, and the settlement views. |
 
 Only `public` is exposed through Supabase's Data API, so all four are reachable
 solely via the service role. The web app will read from purpose-built views in
@@ -65,16 +73,34 @@ silent corruption.
 kicked off.** Data leakage is what makes football models look excellent in backtests
 and lose money in production. It is the most common failure mode in this domain.
 
+The same rule reaches `ml`, where it is enforced rather than trusted: a trigger
+rejects any prediction whose match kicked off before its model's training window
+closed. It spans three tables, so it cannot be a check constraint.
+
+### Reading predictions
+
+`ml.market.status` decides what may be published — `shipping`, `held` or
+`rejected` — so filter on the database rather than on a hardcoded list. A
+published probability is `p_calibrated`; `p_raw` is what the model said before
+its recalibration and is kept so the correction can be revisited. Both the
+correction and the fit that produced any prediction are on file, which is what
+makes a number on the page reproducible.
+
+`ml.prediction_scored` joins predictions to what happened, with `hit` null for
+fixtures not yet played.
+
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest        # 30 tests, ~15s
+.venv/bin/python -m pytest        # 47 tests, ~25s
 ```
 
 The model tests check the analytic gradients against finite differences, because
 a wrong gradient does not raise — it silently stops the optimiser short of the
 maximum likelihood. The leakage tests recompute feature values from scratch
-against the live database and are skipped when `DATABASE_URL` is absent.
+against the live database, and the prediction tests re-derive every published
+probability from its stored calibration. Both are skipped when `DATABASE_URL` is
+absent.
 
 ## Model status
 
@@ -93,6 +119,12 @@ Validated walk-forward on 2022/23–2025/26, all five leagues. Detail in
 Two rules the numbers imposed: published probabilities are always recalibrated,
 never raw; and markets are scored against a *rolling* frequency, because a fixed
 base rate flatters any model whenever a league drifts.
+
+These verdicts are stored in `ml.market.status` rather than left in this table,
+so the application cannot publish a market that has not earned it. Predictions
+for all five leagues have been generated and settled end to end; see
+`docs/results/phase2-stored-predictions.md`, which also shows the residual biases
+tracking league-level drift rather than any failure to separate fixtures.
 
 ## Sources
 
