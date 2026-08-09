@@ -94,6 +94,7 @@ def run(
     xi: float = 0.0018,
     refit_every_days: int = 14,
     min_train: int = 500,
+    venue_penalty: float | None = None,
 ) -> Scores:
     """Walk forward over [test_from, test_to).
 
@@ -135,6 +136,7 @@ def run(
                     np.array([h.away_goals for h in history], float),
                     days_ago,
                     xi=xi,
+                    venue_penalty=venue_penalty,
                 )
                 last_fit = m.kickoff
 

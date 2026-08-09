@@ -15,6 +15,8 @@ This is the master plan. Each phase ends with something measurable.
 | Ratings | 250,050 Elo periods (ClubElo + own elo_goals/elo_xg) |
 | Feature layer | Built, passed 4 independent leakage tests — but measurably adds nothing to any model yet (`docs/04-phase2-feature-blend.md`) |
 | Blend harness | Built and tested, off by default; waiting on features worth blending |
+| Per-team home advantage | Measured and rejected — the home/away split does not persist season to season (`docs/05-venue-effects.md`) |
+| Style of play (PPDA, deep completions) | 100% coverage in `core.match_team_stat`, absent from the feature layer, **never tested** |
 | Dixon-Coles 1X2 | Log-loss 0.98583 vs market 0.96031 — 76% of the base-rate-to-market gap closed |
 | Count models (corners/cards/fouls/shots) | In progress — totals-variance fix written, **not yet re-backtested** |
 | DB size | 402 MB of the 500 MB free tier |

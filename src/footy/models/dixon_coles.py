@@ -14,6 +14,16 @@ Older matches are down-weighted exponentially. A team's form two years ago says
 much less about it than last month, and without decay the model is an average of
 squads that no longer exist.
 
+One home advantage for the whole league says every team travels equally badly,
+which is false: some sides are transformed at home and some barely notice. Set
+venue_penalty and each team also gets its own home deviation, one for attack and
+one for defence, so "solid at home, porous away" becomes something the model can
+say rather than something it averages away. Those deviations are shrunk toward
+zero, because a team plays only nineteen home games a season and the difference
+between a real venue effect and a kind fixture list is mostly sample size. The
+penalty makes this a strict superset of the plain model: send it to infinity and
+the deviations vanish, which is what makes the two directly comparable.
+
 The output is a full score matrix, which is what makes every market coherent: the
 1X2 probabilities, over/under on any line, both-teams-to-score and correct score
 are all sums over the same matrix, so they cannot contradict each other.
@@ -21,7 +31,7 @@ are all sums over the same matrix, so they cannot contradict each other.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.optimize import minimize
@@ -38,6 +48,10 @@ class Fitted:
     home_advantage: float
     rho: float
     n_matches: int
+    # Per-team deviations from the league home advantage, applied only to the
+    # side playing at home. Empty when the model was fitted without them.
+    venue_attack: dict[int, float] = field(default_factory=dict)
+    venue_defence: dict[int, float] = field(default_factory=dict)
 
     def rates(self, home_team: int, away_team: int) -> tuple[float, float]:
         # A team absent from training sits at the league average, which is what
@@ -46,9 +60,13 @@ class Fitted:
         dh = self.defence.get(home_team, 0.0)
         aa = self.attack.get(away_team, 0.0)
         da = self.defence.get(away_team, 0.0)
+        # Only the home side gets a venue term; the away side's own deviations
+        # describe its home matches, not this one.
+        va = self.venue_attack.get(home_team, 0.0)
+        vd = self.venue_defence.get(home_team, 0.0)
         return (
-            float(np.exp(ah + da + self.home_advantage)),
-            float(np.exp(aa + dh)),
+            float(np.exp(ah + va + da + self.home_advantage)),
+            float(np.exp(aa + dh + vd)),
         )
 
     def score_matrix(self, home_team: int, away_team: int) -> np.ndarray:
@@ -106,10 +124,18 @@ class Design:
     m01: np.ndarray
     m10: np.ndarray
     m11: np.ndarray
+    # None fits one home advantage for the league. A number adds a per-team
+    # deviation on top and is the weight of the L2 penalty holding it down.
+    venue_penalty: float | None = None
 
     @property
     def n_teams(self) -> int:
         return len(self.teams)
+
+    @property
+    def n_venue(self) -> int:
+        """Venue parameters per block: n when they are fitted, 0 when they are not."""
+        return 0 if self.venue_penalty is None else len(self.teams)
 
 
 def build_design(
@@ -119,6 +145,7 @@ def build_design(
     away_goals: np.ndarray,
     days_ago: np.ndarray,
     xi: float = 0.0018,
+    venue_penalty: float | None = None,
 ) -> Design:
     teams = sorted(set(home_ids.tolist()) | set(away_ids.tolist()))
     index = {team: i for i, team in enumerate(teams)}
@@ -134,17 +161,30 @@ def build_design(
         m01=(home_goals == 0) & (away_goals == 1),
         m10=(home_goals == 1) & (away_goals == 0),
         m11=(home_goals == 1) & (away_goals == 1),
+        venue_penalty=venue_penalty,
     )
 
 
-def unpack(params: np.ndarray, n: int) -> tuple[np.ndarray, np.ndarray, float, float]:
+def unpack(
+    params: np.ndarray, d: Design
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
+    n = d.n_teams
     attack = np.empty(n)
     # Attack strengths are only identified up to a constant, so the last is
     # pinned to make the mean zero rather than left free.
     attack[: n - 1] = params[: n - 1]
     attack[n - 1] = -params[: n - 1].sum()
     defence = params[n - 1 : 2 * n - 1]
-    return attack, defence, params[-2], params[-1]
+    if d.n_venue:
+        offset = 2 * n - 1
+        venue_attack = params[offset : offset + n]
+        venue_defence = params[offset + n : offset + 2 * n]
+    else:
+        venue_attack = venue_defence = np.zeros(n)
+    # The venue terms would trade off against the league home advantage were
+    # they free; the penalty pulls them to zero, which leaves the shared term
+    # to carry the average and makes the split identified.
+    return attack, defence, venue_attack, venue_defence, params[-2], params[-1]
 
 
 def objective(params: np.ndarray, d: Design) -> tuple[float, np.ndarray]:
@@ -161,9 +201,14 @@ def objective(params: np.ndarray, d: Design) -> tuple[float, np.ndarray]:
     assembled per mask.
     """
     n = d.n_teams
-    attack, defence, home_adv, rho = unpack(params, n)
-    lam = np.clip(np.exp(attack[d.home] + defence[d.away] + home_adv), 1e-8, 30.0)
-    mu = np.clip(np.exp(attack[d.away] + defence[d.home]), 1e-8, 30.0)
+    attack, defence, venue_attack, venue_defence, home_adv, rho = unpack(params, d)
+    lam = np.clip(
+        np.exp(attack[d.home] + venue_attack[d.home] + defence[d.away] + home_adv),
+        1e-8, 30.0,
+    )
+    mu = np.clip(
+        np.exp(attack[d.away] + defence[d.home] + venue_defence[d.home]), 1e-8, 30.0
+    )
 
     tau = np.ones_like(lam)
     tau[d.m00] = 1.0 - lam[d.m00] * mu[d.m00] * rho
@@ -185,6 +230,10 @@ def objective(params: np.ndarray, d: Design) -> tuple[float, np.ndarray]:
         + np.log(tau)
     )
     value = float(-np.sum(d.weights * ll))
+    if d.n_venue:
+        value += d.venue_penalty * float(
+            np.sum(venue_attack**2) + np.sum(venue_defence**2)
+        )
 
     # d log(tau) / d log(lam), d log(tau) / d log(mu), d log(tau) / d rho.
     dtau_dloglam = np.zeros_like(lam)
@@ -216,6 +265,18 @@ def objective(params: np.ndarray, d: Design) -> tuple[float, np.ndarray]:
     )
     grad[: n - 1] = -(attack_grad[: n - 1] - attack_grad[n - 1])
     grad[n - 1 : 2 * n - 1] = -defence_grad
+    if d.n_venue:
+        # A team's venue terms only bite in its own home matches: the attack one
+        # on the goals it scores there, the defence one on the goals it lets in.
+        offset = 2 * n - 1
+        grad[offset : offset + n] = (
+            -np.bincount(d.home, weights=gl, minlength=n)
+            + 2.0 * d.venue_penalty * venue_attack
+        )
+        grad[offset + n : offset + 2 * n] = (
+            -np.bincount(d.home, weights=gm, minlength=n)
+            + 2.0 * d.venue_penalty * venue_defence
+        )
     grad[-2] = -gl.sum()  # home advantage shifts only the home rate
     grad[-1] = -float(np.sum(d.weights * dtau_drho / tau))
     return value, grad
@@ -228,32 +289,40 @@ def fit(
     away_goals: np.ndarray,
     days_ago: np.ndarray,
     xi: float = 0.0018,
+    venue_penalty: float | None = None,
 ) -> Fitted:
     """Maximum likelihood fit with exponential time decay.
 
     xi is the decay rate per day. 0.0018 halves a match's weight after roughly
     a year, which is the range Dixon and Coles found and a reasonable default
     before tuning.
+
+    venue_penalty turns on per-team home deviations and sets how hard they are
+    shrunk. None leaves them out entirely.
     """
-    d = build_design(home_ids, away_ids, home_goals, away_goals, days_ago, xi)
+    d = build_design(
+        home_ids, away_ids, home_goals, away_goals, days_ago, xi, venue_penalty
+    )
     n = d.n_teams
 
     start = np.concatenate([
-        np.zeros(n - 1),      # attack, minus the pinned one
-        np.zeros(n),          # defence
-        [0.25],               # home advantage
-        [-0.05],              # rho
+        np.zeros(n - 1),          # attack, minus the pinned one
+        np.zeros(n),              # defence
+        np.zeros(2 * d.n_venue),  # venue deviations, attack then defence
+        [0.25],                   # home advantage
+        [-0.05],                  # rho
     ])
     bounds = (
         [(-3.0, 3.0)] * (n - 1)
         + [(-3.0, 3.0)] * n
+        + [(-1.0, 1.0)] * (2 * d.n_venue)
         + [(-1.0, 1.0), (-0.2, 0.2)]
     )
     result = minimize(
         objective, start, args=(d,), method="L-BFGS-B", jac=True, bounds=bounds,
         options={"maxiter": 400, "ftol": 1e-9},
     )
-    attack, defence, home_adv, rho = unpack(result.x, n)
+    attack, defence, venue_attack, venue_defence, home_adv, rho = unpack(result.x, d)
     teams, index = d.teams, d.index
     return Fitted(
         teams=teams,
@@ -262,4 +331,10 @@ def fit(
         home_advantage=float(home_adv),
         rho=float(rho),
         n_matches=len(home_ids),
+        venue_attack=(
+            {t: float(venue_attack[index[t]]) for t in teams} if d.n_venue else {}
+        ),
+        venue_defence=(
+            {t: float(venue_defence[index[t]]) for t in teams} if d.n_venue else {}
+        ),
     )

@@ -149,6 +149,17 @@ availability is not recorded at all. `docs/04-phase2-feature-blend.md` has the
 evidence. The harness stays in `src/footy/models/blend.py`, off by default, so
 that player and congestion data can be judged the moment it lands.
 
+Per-team home advantage was measured the same way and also rejected. Opponent
+strength is already the core of every model — Chelsea's expected away goals run
+from 0.90 at Arsenal to 1.97 at Burnley — but the league shares one home
+advantage, so "fortress at home, pushover away" is something the model cannot
+say. Letting each team have its own, with shrinkage, made every market worse at
+every setting. The reason is in the data: across 853 team-seasons, attack
+persists year to year at r=0.65 and defence at 0.55, while the home/away split
+sits at -0.055. It describes the past and predicts nothing.
+`docs/05-venue-effects.md` has the evidence; `venue_penalty` on
+`dixon_coles.fit` is off by default.
+
 ## Sources
 
 | Data | Source | Cost | Coverage | Status |

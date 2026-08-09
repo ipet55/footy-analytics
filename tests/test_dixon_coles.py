@@ -61,6 +61,75 @@ def test_gradient_matches_finite_differences(rho):
     )
 
 
+@pytest.mark.parametrize("penalty", [3.0, 50.0])
+def test_gradient_matches_finite_differences_with_venue_terms(penalty):
+    """The venue block adds two parameters per team and an L2 penalty, so both
+    the likelihood part and the penalty part of its derivative need checking."""
+    home, away, hg, ag, days_ago = synthetic()
+    d = dc.build_design(home, away, hg, ag, days_ago, venue_penalty=penalty)
+    n = d.n_teams
+
+    params = np.concatenate([
+        RNG.normal(0, 0.25, n - 1),
+        RNG.normal(0, 0.2, n),
+        RNG.normal(0, 0.1, 2 * n),
+        [0.25],
+        [-0.05],
+    ])
+    assert_gradient_close(
+        dc.objective(params, d)[1],
+        approx_fprime(params, lambda p: dc.objective(p, d)[0], 1e-6),
+    )
+
+
+def test_venue_terms_are_nested_inside_the_plain_model():
+    """The venue model has to be a strict superset, or the backtest comparing
+    the two is measuring an unrelated change as well. Shrink the deviations hard
+    enough and what is left must be the model we already ship.
+
+    The penalty is 1e4 rather than something enormous: past roughly 1e5 the
+    venue directions dominate the Hessian, L-BFGS-B hits its tolerance early and
+    the remaining parameters drift by more than this asserts. That is the
+    optimiser giving up on a flat direction, not the nesting failing.
+    """
+    home, away, hg, ag, days_ago = synthetic(n_matches=1200)
+    plain = dc.fit(home, away, hg, ag, days_ago)
+    shrunk = dc.fit(home, away, hg, ag, days_ago, venue_penalty=1e4)
+
+    assert max(abs(v) for v in shrunk.venue_attack.values()) < 1e-3
+    assert max(abs(v) for v in shrunk.venue_defence.values()) < 1e-3
+    assert shrunk.home_advantage == pytest.approx(plain.home_advantage, abs=2e-3)
+    for team in plain.teams:
+        assert shrunk.attack[team] == pytest.approx(plain.attack[team], abs=2e-3)
+
+
+def test_venue_terms_are_absent_unless_asked_for():
+    """Fitting without a penalty must leave the shipped model byte-identical,
+    because that is the configuration serving predictions."""
+    home, away, hg, ag, days_ago = synthetic()
+    fitted = dc.fit(home, away, hg, ag, days_ago)
+    assert fitted.venue_attack == {} and fitted.venue_defence == {}
+    lam, mu = fitted.rates(fitted.teams[0], fitted.teams[1])
+    assert lam > 0 and mu > 0
+
+
+def test_venue_terms_only_move_the_home_side():
+    """A team's venue deviations describe its own home matches. If they leaked
+    into its away fixtures the model would be double-counting the ground."""
+    fitted = dc.Fitted(
+        teams=[1, 2], attack={1: 0.0, 2: 0.0}, defence={1: 0.0, 2: 0.0},
+        home_advantage=0.2, rho=0.0, n_matches=0,
+        venue_attack={1: 0.5, 2: 0.0}, venue_defence={1: -0.3, 2: 0.0},
+    )
+    at_home = fitted.rates(1, 2)
+    away = fitted.rates(2, 1)
+    assert at_home[0] == pytest.approx(np.exp(0.2 + 0.5))
+    assert at_home[1] == pytest.approx(np.exp(-0.3))
+    # Team 1 is now the visitor, so neither of its deviations may appear.
+    assert away[0] == pytest.approx(np.exp(0.2))
+    assert away[1] == pytest.approx(1.0)
+
+
 def test_infeasible_rho_is_rejected_with_a_useful_direction():
     """A rho implying a negative probability must not look like a minimum, or
     the optimiser stops there."""
