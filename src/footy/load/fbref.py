@@ -259,3 +259,65 @@ def store(
 
 def country_for(competition_code: str) -> str:
     return COMPETITION_COUNTRY[competition_code]
+
+
+def close_run(
+    run_id: int, status: str, read: int, written: int, error: str | None = None
+) -> None:
+    """Close out an ingest run on its own connection, swallowing any failure.
+
+    Bookkeeping must never be what surfaces instead of the real problem. The
+    first full run died of a dropped connection and then reported the exception
+    raised while trying to record that it had died.
+    """
+    try:
+        with db.connect() as conn:
+            db.finish_run(conn, run_id, status, read, written, error)
+            conn.commit()
+    except Exception:
+        pass
+
+
+def write_batch(
+    country: str,
+    assignments: dict[str, int],
+    sheets: dict[str, list[Appearance]],
+    dates: dict[str, date],
+    attempts: int = 4,
+) -> tuple[int, list[str]]:
+    """Store a batch of sheets on a connection opened just for this write.
+
+    A season is an hour of scraping, and a connection held open across it will
+    be closed under us by the pooler — which is how the first full run died,
+    two thirds of the way through. Scraping now happens with no connection held
+    and each batch reconnects, so a dropped connection costs one retry instead
+    of the rest of the season.
+
+    Returns the appearances stored and any team names that would not resolve.
+    """
+    import time
+
+    for attempt in range(attempts):
+        try:
+            with db.connect() as conn:
+                names = {a.team_name for apps in sheets.values() for a in apps}
+                _, unresolved = register_aliases(conn, names, country)
+                if unresolved:
+                    return 0, unresolved
+                stored = 0
+                for game_id, appearances in sheets.items():
+                    match_id = assignments.get(game_id)
+                    if match_id is None:
+                        continue
+                    stored += store(
+                        conn, match_id, appearances, country, dates[game_id]
+                    )
+                conn.commit()
+                return stored, []
+        except psycopg.OperationalError:
+            if attempt == attempts - 1:
+                raise
+            # The scrape is the expensive part and it is already done and cached,
+            # so waiting here is cheap next to losing the batch.
+            time.sleep(5 * (attempt + 1))
+    return 0, []

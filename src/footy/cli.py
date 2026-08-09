@@ -219,6 +219,7 @@ def load_lineups(
         scheduled = fb.schedule(reader)
         console.print(f"  {len(scheduled)} played matches on the schedule")
 
+        # Planning holds a connection; scraping deliberately does not.
         with db.connect() as conn:
             names = {m.home_name for m in scheduled} | {m.away_name for m in scheduled}
             added, unresolved = fb_load.register_aliases(conn, names, country)
@@ -241,50 +242,37 @@ def load_lineups(
                 f"  {len(linked)} linked, {len(linked) - len(todo)} already stored, "
                 f"{len(todo)} to fetch"
             )
-            if not todo:
-                continue
-
             run_id = db.start_run(conn, fb.SOURCE_CODE, "lineups",
                                   {"competition": competition, "season": year})
             conn.commit()
+        if not todo:
+            fb_load.close_run(run_id, "ok", 0, 0)
+            continue
 
-            # Team sheets are keyed by the sheet's own spelling, which differs
-            # from the schedule's, so those names need registering too.
-            ids = list(todo)
-            stored = 0
-            try:
-                for i in range(0, len(ids), batch):
-                    chunk = ids[i : i + batch]
-                    sheets = fb.sheets(reader, chunk)
-                    sheet_names = {
-                        a.team_name for apps in sheets.values() for a in apps
-                    }
-                    if sheet_names - names:
-                        _, bad = fb_load.register_aliases(conn, sheet_names, country)
-                        if bad:
-                            console.print(f"[red]  unresolved sheet names: {bad}[/red]")
-                            raise typer.Exit(1)
-                        names |= sheet_names
-                    for gid in chunk:
-                        stored += fb_load.store(
-                            conn, todo[gid], sheets.get(gid, []), country,
-                            next(m.kickoff_date for m in scheduled if m.game_id == gid),
-                        )
-                    conn.commit()
-                    done = i + len(chunk)
-                    rate = (time.time() - started) / max(done, 1)
-                    console.print(
-                        f"    {done}/{len(ids)} matches, {stored:,} appearances, "
-                        f"{rate:.1f}s each, ~{rate * (len(ids) - done) / 60:.0f}m left"
-                    )
-            except Exception as exc:
-                db.finish_run(conn, run_id, "error", len(ids), stored, str(exc)[:500])
-                conn.commit()
-                raise
-            db.finish_run(conn, run_id, "ok", len(ids), stored)
-            conn.commit()
-            totals["appearances"] += stored
-            totals["matches"] += len(ids)
+        ids = list(todo)
+        dates = {m.game_id: m.kickoff_date for m in scheduled}
+        stored = 0
+        try:
+            for i in range(0, len(ids), batch):
+                chunk = ids[i : i + batch]
+                sheets = fb.sheets(reader, chunk)
+                written, bad = fb_load.write_batch(country, todo, sheets, dates)
+                if bad:
+                    console.print(f"[red]  unresolved sheet names: {bad}[/red]")
+                    raise typer.Exit(1)
+                stored += written
+                done = i + len(chunk)
+                rate = (time.time() - started) / max(done, 1)
+                console.print(
+                    f"    {done}/{len(ids)} matches, {stored:,} appearances, "
+                    f"{rate:.1f}s each, ~{rate * (len(ids) - done) / 60:.0f}m left"
+                )
+        except Exception as exc:
+            fb_load.close_run(run_id, "error", len(ids), stored, str(exc)[:500])
+            raise
+        fb_load.close_run(run_id, "ok", len(ids), stored)
+        totals["appearances"] += stored
+        totals["matches"] += len(ids)
 
     console.print(
         f"\n[green]{totals['matches']:,} matches, {totals['appearances']:,} "
