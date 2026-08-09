@@ -157,6 +157,15 @@ UNDERSTAT_ALIASES: dict[str, str] = {
 }
 
 
+# FBref name -> canonical name, for spellings neither an exact match nor another
+# source's registered alias resolves. FBref is also inconsistent with itself —
+# its schedule says "Manchester Utd" where its team sheets say "Manchester
+# United" — but both of those resolve on their own, so only genuine gaps go here.
+FBREF_ALIASES: dict[str, str] = {
+    "Nottingham": "Nottingham Forest",
+}
+
+
 # ClubElo tracks exactly the same 167 top-flight clubs; 151 matched automatically
 # through a canonical name or an alias another source had already registered.
 # These 16 use short forms or German "ue" transliteration.

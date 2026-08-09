@@ -186,6 +186,112 @@ def load_xg(
         )
 
 
+@app.command("load-lineups")
+def load_lineups(
+    competition: str = typer.Option("ENG-PL", help="Competition code."),
+    season: int | None = typer.Option(None, help="Load only this starting year."),
+    from_year: int = typer.Option(2020, help="Earliest season to load."),
+    to_year: int = typer.Option(2024, help="Latest season to load."),
+    batch: int = typer.Option(10, help="Matches fetched per request round."),
+):
+    """Scrape FBref team sheets into core.appearance.
+
+    Roughly seven seconds a match, which their published rate limit sets and we
+    do not undercut, so a season takes about seventy minutes. Safe to interrupt:
+    core.lineup_coverage records what has landed and a re-run resumes from there.
+
+    FBref currently serves the 2026-27 page for the 2025-26 URL, so 2024 is the
+    latest season reachable this way.
+    """
+    import time
+
+    from footy.load import fbref as fb_load
+    from footy.sources import fbref as fb
+
+    years = [season] if season else list(range(from_year, to_year + 1))
+    country = fb_load.country_for(competition)
+    started = time.time()
+    totals = Counter()
+
+    for year in years:
+        console.print(f"\n[bold]{competition} {year}-{(year + 1) % 100:02d}[/bold]")
+        reader = fb.reader(competition, year)
+        scheduled = fb.schedule(reader)
+        console.print(f"  {len(scheduled)} played matches on the schedule")
+
+        with db.connect() as conn:
+            names = {m.home_name for m in scheduled} | {m.away_name for m in scheduled}
+            added, unresolved = fb_load.register_aliases(conn, names, country)
+            if added:
+                console.print(f"  {added} FBref team aliases registered")
+            if unresolved:
+                console.print(f"[red]  unresolved team names: {unresolved}[/red]")
+                console.print("  They are queued in core.unresolved_alias.")
+                raise typer.Exit(1)
+
+            linked, missing = fb_load.link_matches(conn, competition, year, scheduled)
+            if missing:
+                console.print(
+                    f"[yellow]  {len(missing)} FBref matches have no match of ours"
+                    f"; first: {missing[0].home_name} v {missing[0].away_name}"
+                    f" on {missing[0].kickoff_date}[/yellow]"
+                )
+            todo = fb_load.pending(conn, linked)
+            console.print(
+                f"  {len(linked)} linked, {len(linked) - len(todo)} already stored, "
+                f"{len(todo)} to fetch"
+            )
+            if not todo:
+                continue
+
+            run_id = db.start_run(conn, fb.SOURCE_CODE, "lineups",
+                                  {"competition": competition, "season": year})
+            conn.commit()
+
+            # Team sheets are keyed by the sheet's own spelling, which differs
+            # from the schedule's, so those names need registering too.
+            ids = list(todo)
+            stored = 0
+            try:
+                for i in range(0, len(ids), batch):
+                    chunk = ids[i : i + batch]
+                    sheets = fb.sheets(reader, chunk)
+                    sheet_names = {
+                        a.team_name for apps in sheets.values() for a in apps
+                    }
+                    if sheet_names - names:
+                        _, bad = fb_load.register_aliases(conn, sheet_names, country)
+                        if bad:
+                            console.print(f"[red]  unresolved sheet names: {bad}[/red]")
+                            raise typer.Exit(1)
+                        names |= sheet_names
+                    for gid in chunk:
+                        stored += fb_load.store(
+                            conn, todo[gid], sheets.get(gid, []), country,
+                            next(m.kickoff_date for m in scheduled if m.game_id == gid),
+                        )
+                    conn.commit()
+                    done = i + len(chunk)
+                    rate = (time.time() - started) / max(done, 1)
+                    console.print(
+                        f"    {done}/{len(ids)} matches, {stored:,} appearances, "
+                        f"{rate:.1f}s each, ~{rate * (len(ids) - done) / 60:.0f}m left"
+                    )
+            except Exception as exc:
+                db.finish_run(conn, run_id, "error", len(ids), stored, str(exc)[:500])
+                conn.commit()
+                raise
+            db.finish_run(conn, run_id, "ok", len(ids), stored)
+            conn.commit()
+            totals["appearances"] += stored
+            totals["matches"] += len(ids)
+
+    console.print(
+        f"\n[green]{totals['matches']:,} matches, {totals['appearances']:,} "
+        f"appearances in {(time.time() - started) / 60:.0f}m[/green]"
+    )
+
+
 @app.command("load-elo")
 def load_elo():
     """Fetch ClubElo rating histories and load them into core.team_rating."""
