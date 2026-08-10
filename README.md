@@ -160,6 +160,18 @@ sits at -0.055. It describes the past and predicts nothing.
 `docs/05-venue-effects.md` has the evidence; `venue_penalty` on
 `dixon_coles.fit` is off by default.
 
+Squad strength is the one that works. FBref team sheets for 1,900 Premier League
+matches gave the models something they never had: who is actually on the pitch.
+How much of today's eleven is the established eleven gains **0.0102 of 1X2
+log-loss on every held-out season**, about 36% of the remaining gap to the
+bookmaker's closing line — and against a benchmark priced after lineups are
+published, so it is not an information advantage. Own continuity comes out at
++0.065 and the opponent's at -0.046, and teams missing three regulars score 5%
+below expectation against 6% above at full strength. Over/under gains nothing,
+which is what should happen: continuity moves goals between the sides, not the
+total. Recalibration accounts for none of it. `docs/06-squad-strength.md` has the
+evidence; reproduce with `footy squad-check`. Not yet in the serving path.
+
 ## Sources
 
 | Data | Source | Cost | Coverage | Status |

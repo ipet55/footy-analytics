@@ -489,6 +489,35 @@ def backtest_counts(
             cb.calibration_table(result, "total calibrated", middle)
 
 
+@app.command("squad-check")
+def squad_check(
+    competition: str = typer.Option("ENG-PL", help="Competition code."),
+):
+    """Ask whether knowing the starting eleven improves the goals model. It does.
+
+    Holds each season out in turn, training the correction only on what came
+    before it, and reports the intercept-only variant alongside so that a gain
+    from plain recalibration cannot be mistaken for a gain from squad strength.
+
+    Needs team sheets, so run `footy load-lineups` first.
+    """
+    from footy.models import squad_check as sc
+
+    console.print(
+        "Walking forward and refitting Dixon-Coles fortnightly, which takes a "
+        "minute or so..."
+    )
+    try:
+        results = sc.run(competition=competition)
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    if not results:
+        console.print("[yellow]not enough seasons with team sheets to hold one out[/yellow]")
+        raise typer.Exit(1)
+    sc.report(results)
+
+
 @app.command("blend-check")
 def blend_check(
     stat: str | None = typer.Option(

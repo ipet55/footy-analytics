@@ -17,6 +17,8 @@ This is the master plan. Each phase ends with something measurable.
 | Blend harness | Built and tested, off by default; waiting on features worth blending |
 | Per-team home advantage | Measured and rejected — the home/away split does not persist season to season (`docs/05-venue-effects.md`) |
 | Style of play (PPDA, deep completions) | 100% coverage in `core.match_team_stat`, absent from the feature layer, **never tested** |
+| Player layer | ENG-PL 2020-21 to 2024-25: 1,900 match sheets, 75,358 appearances, 1,609 players. All 3,800 team-matches reconcile with the official score |
+| Squad strength | **Works.** Lineup continuity gains 0.0102 of 1X2 log-loss on every held-out season, ~36% of the remaining gap to the closing line (`docs/06-squad-strength.md`). Not yet in the serving path |
 | Dixon-Coles 1X2 | Log-loss 0.98583 vs market 0.96031 — 76% of the base-rate-to-market gap closed |
 | Count models (corners/cards/fouls/shots) | In progress — totals-variance fix written, **not yet re-backtested** |
 | DB size | 402 MB of the 500 MB free tier |
