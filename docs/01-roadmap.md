@@ -19,6 +19,7 @@ This is the master plan. Each phase ends with something measurable.
 | Style of play (PPDA, deep completions) | 100% coverage in `core.match_team_stat`, absent from the feature layer, **never tested** |
 | Player layer | ENG-PL 2020-21 to 2024-25: 1,900 match sheets, 75,358 appearances, 1,609 players. All 3,800 team-matches reconcile with the official score |
 | Squad strength | **Works.** Lineup continuity gains 0.0102 of 1X2 log-loss on every held-out season, ~36% of the remaining gap to the closing line (`docs/06-squad-strength.md`). Not yet in the serving path |
+| Serving squad strength | **Blocked on a lineup feed.** A predicted eleven from free data recovers 10% of the gain; 82% sits in the unguessable part. This is the first thing in the project that money actually unlocks |
 | Dixon-Coles 1X2 | Log-loss 0.98583 vs market 0.96031 — 76% of the base-rate-to-market gap closed |
 | Count models (corners/cards/fouls/shots) | In progress — totals-variance fix written, **not yet re-backtested** |
 | DB size | 402 MB of the 500 MB free tier |
@@ -106,14 +107,18 @@ of log-loss is worth less than being able to see what already works.
 - Still to do here: the GitHub Actions cron that keeps fixtures and predictions
   fresh, and the generated per-fixture summary.
 
-### Phase 3 — player layer (needs API-Football month)
-Before paying: run the free upper-bound test. Understat publishes per-player
-xG, xA and minutes for every match since 2014, which gives the *actual* lineup
-retrospectively. Building squad-strength features from the real lineup is
-deliberately unfair to a live system, which would only know it an hour before
-kickoff — and that is the point. If knowing the true lineup does not improve the
-models, no injury feed or announced-lineup API can, and the month need never be
-bought. If it does, the size of the prize is known before spending anything.
+### Phase 3 — player layer (done for ENG-PL; free upper-bound test answered)
+The plan was to run the free upper-bound test before paying, so that the size of
+the prize would be known before spending anything. That test has now been run,
+on FBref rather than Understat, and it came back positive: knowing the true
+eleven is worth 0.0102 of 1X2 log-loss (`docs/06-squad-strength.md`).
+
+The follow-up question — whether a *predicted* eleven could substitute for a
+live feed — was also run, and came back negative: 10% of the gain. So the
+API-Football month is no longer speculative. It buys a measured 0.0092 that
+cannot be had for free, and the ceiling is known.
+
+Remaining before buying: replicate on the other four leagues, which is free.
 
 - New tables: `core.player` (+ `player_alias`), `core.appearance`
   (match, player, minutes, position, goals, assists, cards),

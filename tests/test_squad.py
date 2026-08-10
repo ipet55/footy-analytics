@@ -14,22 +14,29 @@ from datetime import date, timedelta
 from footy.models import squad
 
 
-def sheet(match_id, day, team_id, player_ids, goals=None, minutes=90):
-    """One team's eleven, all starters, for a synthetic match."""
+def sheet(match_id, day, team_id, player_ids, goals=None, minutes=90,
+          bench=(), reds=()):
+    """One team's eleven, all starters, for a synthetic match.
+
+    Bench players are named but unused, which is what separates a rested player
+    from an unavailable one.
+    """
     goals = goals or {}
-    return [
-        squad.Appearance(
+
+    def app(p, starter):
+        return squad.Appearance(
             match_id=match_id,
             kickoff=date(2024, 1, 1) + timedelta(days=day),
             team_id=team_id,
             player_id=p,
-            is_starter=True,
-            minutes=minutes,
+            is_starter=starter,
+            minutes=minutes if starter else 0,
             goals=goals.get(p, 0),
             assists=0,
+            reds=1 if p in reds else 0,
         )
-        for p in player_ids
-    ]
+
+    return [app(p, True) for p in player_ids] + [app(p, False) for p in bench]
 
 
 def season(n_matches=20, team_a=1, team_b=2, squad_a=None, squad_b=None):
@@ -124,3 +131,96 @@ def test_experience_counts_only_prior_appearances():
     built = squad.build(season(n_matches=6))
     # Before match 6 each player has played the five that came before it.
     assert built[(6, 1)]["xi_experience"] == 5.0
+
+
+def rotating(n_matches=12, pool=None, dropped=None, reds_in=None, in_squad=True):
+    """A side that rotates two players out per match, so a squad rather than an
+    eleven accumulates minutes.
+
+    dropped maps a match number to players who do not play in it. in_squad says
+    whether they sit on the bench or vanish from the team sheet. That switch is
+    the control the availability tests need: either way the player loses the
+    same minutes, so any difference between them is the absence itself.
+    """
+    pool = pool or list(range(100, 113))
+    dropped, reds_in = dropped or {}, reds_in or {}
+    apps = []
+    for i in range(n_matches):
+        m = i + 1
+        rested = {pool[(2 * i) % len(pool)], pool[(2 * i + 1) % len(pool)]}
+        out = set(dropped.get(m, ()))
+        starters = [p for p in pool if p not in rested and p not in out][:11]
+        bench = [p for p in pool if p not in starters and (p not in out or in_squad)]
+        apps += sheet(m, i * 7, 1, starters, bench=bench, reds=reds_in.get(m, ()))
+        apps += sheet(m, i * 7, 2, list(range(200, 211)))
+    return apps
+
+
+def test_the_forecast_cannot_see_the_eleven_it_is_predicting():
+    """The decisive test for the servable feature. Whoever actually walks out
+    for this match must not change what we would have predicted for it."""
+    played = season(n_matches=12)
+    upset = [a for a in played if not (a.match_id == 12 and a.team_id == 1)]
+    upset += sheet(12, 77, 1, list(range(300, 311)))
+
+    normal = squad.build(played)[(12, 1)]
+    shuffled = squad.build(upset)[(12, 1)]
+
+    assert shuffled["xi_continuity_forecast"] == normal["xi_continuity_forecast"]
+    # And the actual measure does move, so the test is not vacuous.
+    assert shuffled["xi_continuity"] != normal["xi_continuity"]
+
+
+def test_a_sending_off_weakens_the_next_match_forecast():
+    """A red card is a suspension we know about before kickoff, so the eleven we
+    predict should fall back on someone less established."""
+    clean = squad.build(rotating())[(12, 1)]
+    suspended = squad.build(rotating(reds_in={11: (100,)}))[(12, 1)]
+    assert suspended["xi_continuity_forecast"] < clean["xi_continuity_forecast"]
+
+
+def settled_side(n_matches=12, dropped=None, in_squad=True):
+    """Ten ever-presents plus three players competing for the last shirt.
+
+    The absence tests need a first-choice player who is still among the eleven
+    most-used even after missing a couple of matches. Under even rotation he is
+    not, so skipping him changes nothing and the test would pass whatever the
+    availability rule did.
+    """
+    core, fringe = list(range(100, 110)), [110, 111, 112]
+    dropped = dropped or {}
+    apps = []
+    for i in range(n_matches):
+        m = i + 1
+        out = set(dropped.get(m, ()))
+        starters = [p for p in core if p not in out]
+        rotating_in = [p for p in fringe if p not in out]
+        starters += rotating_in[i % len(rotating_in):][:11 - len(starters)]
+        starters = (starters + [p for p in fringe if p not in starters and p not in out])[:11]
+        bench = [p for p in core + fringe
+                 if p not in starters and (p not in out or in_squad)]
+        apps += sheet(m, i * 7, 1, starters, bench=bench)
+        apps += sheet(m, i * 7, 2, list(range(200, 211)))
+    return apps
+
+
+def test_a_regular_missing_from_recent_squads_is_presumed_unavailable():
+    """Dropping out of the squad entirely, rather than being rested on the
+    bench, is the only injury signal available without an injury feed.
+
+    Both sides of this comparison lose the same two matches of minutes, so the
+    gap between them is the absence and nothing else.
+    """
+    out = {10: (100,), 11: (100,)}
+    benched = squad.build(settled_side(dropped=out, in_squad=True))[(12, 1)]
+    vanished = squad.build(settled_side(dropped=out, in_squad=False))[(12, 1)]
+    assert vanished["xi_continuity_forecast"] < benched["xi_continuity_forecast"]
+
+
+def test_one_match_out_is_not_yet_treated_as_an_injury():
+    """Missing a single match is ordinary rotation. Reading it as absence would
+    fire the feature on half the league every week."""
+    out = {11: (100,)}
+    benched = squad.build(settled_side(dropped=out, in_squad=True))[(12, 1)]
+    vanished = squad.build(settled_side(dropped=out, in_squad=False))[(12, 1)]
+    assert vanished["xi_continuity_forecast"] == benched["xi_continuity_forecast"]

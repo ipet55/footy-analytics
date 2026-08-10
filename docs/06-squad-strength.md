@@ -87,6 +87,42 @@ to a fitted coincidence:
 A full-strength side beats the model's expectation by 6%; one missing three
 regulars falls 5% short. A 12% swing the team model had no way to express.
 
+## Can we serve this without a lineup feed? No
+
+The result above uses the eleven that actually started, published about an hour
+before kickoff. FBref only has it afterwards. So the question that decides
+whether any of this reaches production is whether a *predicted* eleven, built
+from data we already hold, recovers the gain.
+
+It does not. **The guessable part of continuity is worth 10% of the total; the
+part we cannot guess is worth 82%.**
+
+| Correction uses | 1X2 log-loss | Gain | Share of the actual-XI gain |
+|---|---|---|---|
+| plain model | 0.9728 | — | — |
+| forecast eleven | 0.9718 | +0.0010 | 10% |
+| the surprise (actual − forecast) | 0.9644 | +0.0084 | 82% |
+| actual eleven | 0.9626 | +0.0102 | 100% |
+
+The forecast is not a strawman. It takes the most-used recent players, drops
+anyone sent off last match, and drops anyone who has vanished from the squad for
+two matches running — the suspension and injury signals that are knowable in
+advance and already sitting in the appearance data. It gets **8.2 of 11 starters
+right**, and its continuity correlates 0.70 with the real thing.
+
+That accuracy is exactly why it is worthless. A predicted eleven is by
+construction the side that normally plays, so it looks close to full strength
+every week: its spread is 64% of the real measure's and centred 0.10 higher. The
+model already knows what a team looks like at full strength — that is what its
+attack and defence ratings *are*. The only new information in a team sheet is the
+departure from it, and the departure is precisely the part that cannot be
+predicted from past team sheets.
+
+This is a clean negative result with a clear consequence: **serving this feature
+requires a pre-match lineup or injury feed.** Until then the measurement stands
+as a measurement, and the ceiling on any lineup feed we might buy is 0.0102 —
+0.0092 of it above what we can already manage for free.
+
 ## Why 1X2 and not over/under
 
 Over/under 2.5 gained +0.0003, which is nothing. That is the expected result
@@ -108,9 +144,8 @@ What this does not yet establish:
   seasons but the other four leagues are unscraped, and replication there is the
   next thing that should happen.
 - **It uses the eleven that actually started**, known about an hour before
-  kickoff. That is genuinely usable — it is when the closing line forms — but it
-  is not usable for a prediction published the day before. Predicted lineups are
-  a different and weaker feature, and this result is the ceiling for them.
+  kickoff. Predicted lineups were then built and measured, and recover only 10%
+  of the gain, so this needs a live feed to be served at all. See above.
 - **2025-26 is missing.** FBref serves the 2026-27 page for the 2025-26 URL, so
   the most recent completed season is unreachable this way.
 - **Nothing here is in the serving path yet.** `ml.prediction` is still written

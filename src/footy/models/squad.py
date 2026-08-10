@@ -40,7 +40,15 @@ FEATURES = (
     "xi_goal_threat",
     "xi_experience",
     "key_players_absent",
+    # The same continuity measure, but over the eleven we would have guessed
+    # rather than the eleven that played. See _forecast_continuity.
+    "xi_continuity_forecast",
 )
+
+# How many recent squads a regular must be missing from before we call him
+# unavailable. One is too jumpy — players are rested for a single match all the
+# time — and three is too slow to notice an injury.
+ABSENT_MATCHES = 2
 
 
 @dataclass
@@ -53,6 +61,7 @@ class Appearance:
     minutes: int
     goals: int
     assists: int
+    reds: int = 0
 
 
 @dataclass
@@ -70,6 +79,10 @@ class _TeamState:
     """Recent team sheets, newest last."""
 
     recent: deque = field(default_factory=lambda: deque(maxlen=FORM_WINDOW))
+    # Everyone named, including unused substitutes. Being on the bench is the
+    # difference between rested and unavailable, and only this records it.
+    squads: deque = field(default_factory=lambda: deque(maxlen=FORM_WINDOW))
+    sent_off: set = field(default_factory=set)
 
     def minutes_by_player(self) -> dict[int, float]:
         out: dict[int, float] = defaultdict(float)
@@ -81,6 +94,19 @@ class _TeamState:
     def available_minutes(self) -> float:
         return 90.0 * len(self.recent)
 
+    def presumed_available(self, player_id: int) -> bool:
+        """Would we have expected this player to be selectable, before kickoff?
+
+        Two signals, both knowable in advance and both already in the sheets we
+        hold: a red card last time out means a suspension, and vanishing from
+        the squad entirely for a couple of matches means an injury. Neither is
+        an injury feed, but neither needs one.
+        """
+        if player_id in self.sent_off:
+            return False
+        window = list(self.squads)[-ABSENT_MATCHES:]
+        return not window or any(player_id in squad for squad in window)
+
 
 def load(competition: str) -> list[Appearance]:
     """Every appearance we hold for a competition, oldest first."""
@@ -90,7 +116,8 @@ def load(competition: str) -> list[Appearance]:
             """
             select a.match_id, m.kickoff_date, a.team_id, a.player_id,
                    a.is_starter, a.minutes,
-                   coalesce(a.goals, 0), coalesce(a.assists, 0)
+                   coalesce(a.goals, 0), coalesce(a.assists, 0),
+                   coalesce(a.reds, 0)
               from core.appearance a
               join core.match m on m.match_id = a.match_id
               join core.competition c on c.competition_id = m.competition_id
@@ -100,6 +127,29 @@ def load(competition: str) -> list[Appearance]:
             (competition,),
         )
     return [Appearance(*r) for r in rows]
+
+
+def _forecast_xi(team: _TeamState) -> tuple[float, list[int]] | None:
+    """Continuity of the eleven we would have guessed, not the one that played.
+
+    This is the version that could actually be served, because it uses nothing
+    published after kickoff. The eleven is the most-used recent players who are
+    not suspended and have not dropped out of the squad.
+
+    The measure only varies because of who is *missing*. Guessing the eleven as
+    "whoever normally plays" would give every team a full-strength side and a
+    feature with no variance; what carries information is a regular being
+    unavailable, which is knowable in advance.
+    """
+    minutes = team.minutes_by_player()
+    available = team.available_minutes()
+    if available <= 0:
+        return None
+    selectable = [p for p in minutes if team.presumed_available(p)]
+    if len(selectable) < 11:
+        return None
+    eleven = sorted(selectable, key=lambda p: -minutes[p])[:11]
+    return sum(min(minutes[p] / available, 1.0) for p in eleven) / 11, eleven
 
 
 def _features_for(team: _TeamState, players: dict[int, _PlayerState],
@@ -139,12 +189,21 @@ def _features_for(team: _TeamState, players: dict[int, _PlayerState],
     key = sorted(minutes, key=lambda p: -minutes[p])[:11]
     absent = sum(1 for p in key if p not in squad and minutes[p] / available >= REGULAR_SHARE)
 
+    predicted = _forecast_xi(team)
+    if predicted is None:
+        return None
+    forecast, eleven = predicted
+
     return {
         "xi_continuity": continuity,
         "xi_regulars": float(regulars),
         "xi_goal_threat": threat,
         "xi_experience": experience,
         "key_players_absent": float(absent),
+        "xi_continuity_forecast": forecast,
+        # Diagnostic only, and deliberately not in FEATURES: it is measured
+        # against the eleven that played, so it could never be served.
+        "forecast_hits": float(len(set(eleven) & set(starters))),
     }
 
 
@@ -178,9 +237,14 @@ def build(appearances: list[Appearance]) -> dict[tuple[int, int], dict[str, floa
 
         # Only now does this match become history.
         for team_id, apps in sides.items():
-            teams[team_id].recent.append(
+            state = teams[team_id]
+            state.recent.append(
                 {a.player_id: float(a.minutes) for a in apps if a.minutes > 0}
             )
+            state.squads.append({a.player_id for a in apps})
+            # A red card rules the player out of the next match only, so this
+            # replaces rather than accumulates.
+            state.sent_off = {a.player_id for a in apps if a.reds}
             for a in apps:
                 st = players[a.player_id]
                 st.minutes += a.minutes

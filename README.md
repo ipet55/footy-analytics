@@ -172,6 +172,14 @@ which is what should happen: continuity moves goals between the sides, not the
 total. Recalibration accounts for none of it. `docs/06-squad-strength.md` has the
 evidence; reproduce with `footy squad-check`. Not yet in the serving path.
 
+It cannot get there on free data. A predicted eleven built from recent minutes,
+suspensions and players missing from recent squads gets 8.2 of 11 starters right
+and still recovers only **10% of the gain**; the unguessable remainder carries
+82%. That is the point rather than a failure of the forecast — the model already
+knows what a team looks like at full strength, so the only news in a team sheet
+is the departure from it. Serving squad strength therefore needs a pre-match
+lineup feed, and that feed is worth at most 0.0102.
+
 ## Sources
 
 | Data | Source | Cost | Coverage | Status |
