@@ -192,3 +192,28 @@ def test_a_stronger_team_is_given_a_better_chance():
     strong_home = dc.outcome_probabilities(fitted.score_matrix(best, worst))[0]
     weak_home = dc.outcome_probabilities(fitted.score_matrix(worst, best))[0]
     assert strong_home > weak_home
+
+
+def test_a_promoted_club_is_priced_at_the_league_average():
+    """A club with no history must sit at the league average, and the average is
+    the mean of the fitted parameters rather than zero.
+
+    Only attack is centred on zero by the fit. Defence is not, so defaulting it
+    to zero quietly understated the goals expected against every promoted club.
+    """
+    home, away, hg, ag, days_ago = synthetic(n_matches=800)
+    fitted = dc.fit(home, away, hg.astype(float), ag.astype(float), days_ago)
+    promoted = 999
+
+    average_home = np.mean([
+        fitted.rates(h, a)[0] for h in fitted.teams for a in fitted.teams if h != a
+    ])
+    lam, mu = fitted.rates(promoted, promoted)
+    # Two average sides: the home rate is the league's average home rate.
+    assert lam == pytest.approx(average_home, rel=0.1)
+    # And the model still favours the home side between two identical teams.
+    assert lam > mu
+
+    matrix = fitted.score_matrix(promoted, 0)
+    assert matrix.sum() == pytest.approx(1.0)
+    assert all(0.01 < p < 0.99 for p in dc.outcome_probabilities(matrix))

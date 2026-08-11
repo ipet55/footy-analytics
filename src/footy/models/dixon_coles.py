@@ -52,14 +52,22 @@ class Fitted:
     # side playing at home. Empty when the model was fitted without them.
     venue_attack: dict[int, float] = field(default_factory=dict)
     venue_defence: dict[int, float] = field(default_factory=dict)
+    # What a team absent from training gets: the average of the fitted values,
+    # which is what "the league average" actually means. Only attack is centred
+    # on zero by the fit; defence is not, so defaulting it to zero understated
+    # every promoted club's opponent by around 18%. Set by `fit`.
+    attack_default: float = 0.0
+    defence_default: float = 0.0
 
     def rates(self, home_team: int, away_team: int) -> tuple[float, float]:
-        # A team absent from training sits at the league average, which is what
-        # attack = defence = 0 means once the parameters are centred.
-        ah = self.attack.get(home_team, 0.0)
-        dh = self.defence.get(home_team, 0.0)
-        aa = self.attack.get(away_team, 0.0)
-        da = self.defence.get(away_team, 0.0)
+        # A promoted club has no parameters of its own and sits at the league
+        # average. That is a neutral prior rather than a good one — promoted teams
+        # are systematically weaker than average — but it is the honest default
+        # when the team has never played in the league we have data for.
+        ah = self.attack.get(home_team, self.attack_default)
+        dh = self.defence.get(home_team, self.defence_default)
+        aa = self.attack.get(away_team, self.attack_default)
+        da = self.defence.get(away_team, self.defence_default)
         # Only the home side gets a venue term; the away side's own deviations
         # describe its home matches, not this one.
         va = self.venue_attack.get(home_team, 0.0)
@@ -328,6 +336,8 @@ def fit(
         teams=teams,
         attack={t: float(attack[index[t]]) for t in teams},
         defence={t: float(defence[index[t]]) for t in teams},
+        attack_default=float(attack.mean()),
+        defence_default=float(defence.mean()),
         home_advantage=float(home_adv),
         rho=float(rho),
         n_matches=len(home_ids),

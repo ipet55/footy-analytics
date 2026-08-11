@@ -24,8 +24,19 @@ from datetime import date
 import psycopg
 
 from footy import db
-from footy.sources.fbref import SOURCE_CODE, STAT_MAP, Appearance, ScheduledMatch
-from footy.teams import COMPETITION_COUNTRY, FBREF_ALIASES, FBREF_NOT_IN_LEAGUE
+from footy.sources.fbref import (
+    SOURCE_CODE,
+    STAT_MAP,
+    Appearance,
+    Fixture,
+    ScheduledMatch,
+)
+from footy.teams import (
+    COMPETITION_COUNTRY,
+    FBREF_ALIASES,
+    FBREF_NOT_IN_LEAGUE,
+    FBREF_PROMOTED,
+)
 
 STAT_COLUMNS = list(STAT_MAP.values())
 
@@ -122,6 +133,197 @@ def register_aliases(
     # rows that explain what went wrong.
     conn.commit()
     return added, unresolved
+
+
+def seed_promoted(
+    conn: psycopg.Connection, names: set[str], country: str
+) -> list[str]:
+    """Create the declared promoted clubs among these names, and alias them.
+
+    Returns the canonical names created. Only names in `FBREF_PROMOTED` are
+    touched, so an unrecognised spelling still stops the load instead of becoming
+    a new club.
+    """
+    wanted = {n: FBREF_PROMOTED[n] for n in names if n in FBREF_PROMOTED}
+    if not wanted:
+        return []
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            insert into core.team (canonical_name, country) values (%s, %s)
+            on conflict (core.norm_name(canonical_name)) do nothing
+            """,
+            sorted((canonical_name, country) for canonical_name in wanted.values()),
+        )
+        cur.executemany(
+            """
+            insert into core.team_alias (team_id, source_id, alias_name)
+            select t.team_id, s.source_id, %s
+              from core.team t cross join core.source s
+             where core.norm_name(t.canonical_name) = core.norm_name(%s)
+               and t.country = %s and s.code = %s
+            on conflict (source_id, norm_name) do nothing
+            """,
+            sorted(
+                (raw, canonical_name, country, SOURCE_CODE)
+                for raw, canonical_name in wanted.items()
+            ),
+        )
+    conn.commit()
+    return sorted(set(wanted.values()))
+
+
+def ensure_season(
+    conn: psycopg.Connection, competition_code: str, start_year: int
+) -> int:
+    """The season row for a competition, created if this is its first sighting.
+
+    Seasons up to 2025-26 arrived with their results, because a completed season
+    is loaded all at once. A fixture list arrives before anything has been played,
+    so it has to make its own.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into core.season (competition_id, start_year, end_year, label)
+            select c.competition_id, %s, %s, %s
+              from core.competition c where c.code = %s
+            on conflict (competition_id, start_year) do nothing
+            """,
+            (start_year, start_year + 1,
+             f"{start_year}/{(start_year + 1) % 100:02d}", competition_code),
+        )
+        # Only one season of a competition is the current one, and it is the
+        # latest we hold fixtures for.
+        cur.execute(
+            """
+            update core.season s
+               set is_current = (s.start_year = %s)
+              from core.competition c
+             where c.competition_id = s.competition_id
+               and c.code = %s
+               and s.is_current <> (s.start_year = %s)
+            """,
+            (start_year, competition_code, start_year),
+        )
+        cur.execute(
+            """
+            select s.season_id from core.season s
+              join core.competition c using (competition_id)
+             where c.code = %s and s.start_year = %s
+            """,
+            (competition_code, start_year),
+        )
+        row = cur.fetchone()
+    if row is None:
+        raise RuntimeError(f"unknown competition {competition_code}")
+    conn.commit()
+    return row[0]
+
+
+def store_fixtures(
+    conn: psycopg.Connection,
+    competition_code: str,
+    start_year: int,
+    fixtures: list[Fixture],
+) -> tuple[int, int, list[str]]:
+    """Write a season's calendar as scheduled matches.
+
+    Returns (inserted, rescheduled, unresolved names). A fixture already in the
+    table is updated rather than duplicated, so this is safe to re-run when the
+    calendar moves — which it does constantly, for television.
+
+    Results are never touched. A match that has since been played keeps its score
+    and its finished status even though the fixture list still lists it, because
+    the calendar is authoritative about *when* and nothing else.
+    """
+    if not fixtures:
+        return 0, 0, []
+    ensure_season(conn, competition_code, start_year)
+
+    with conn.cursor() as cur:
+        db.copy_into_temp(
+            conn,
+            "_fb_fixture",
+            ["kickoff_date", "home_name", "away_name", "matchday", "venue"],
+            (
+                [f.kickoff_date, f.home_name, f.away_name, f.matchday, f.venue]
+                for f in fixtures
+            ),
+            """
+            create temporary table _fb_fixture (
+                kickoff_date date, home_name text, away_name text,
+                matchday smallint, venue text
+            )
+            """,
+        )
+        cur.execute(
+            """
+            create temporary table _fb_resolved as
+            select f.*, c.competition_id, se.season_id,
+                   hta.team_id as home_team_id, ata.team_id as away_team_id
+              from _fb_fixture f
+              join core.source src on src.code = %s
+              join core.competition c on c.code = %s
+              join core.season se on se.competition_id = c.competition_id
+                                 and se.start_year = %s
+              join core.team_alias hta on hta.source_id = src.source_id
+                                      and hta.norm_name = core.norm_name(f.home_name)
+              join core.team_alias ata on ata.source_id = src.source_id
+                                      and ata.norm_name = core.norm_name(f.away_name)
+            """,
+            (SOURCE_CODE, competition_code, start_year),
+        )
+        cur.execute("select count(*) from _fb_resolved")
+        resolved = cur.fetchone()[0]
+        if resolved != len(fixtures):
+            cur.execute(
+                """
+                select distinct name from (
+                    select home_name as name from _fb_fixture
+                    union all select away_name from _fb_fixture
+                ) n
+                 cross join core.source src
+                 where src.code = %s
+                   and not exists (
+                        select 1 from core.team_alias a
+                         where a.source_id = src.source_id
+                           and a.norm_name = core.norm_name(n.name))
+                 order by name
+                """,
+                (SOURCE_CODE,),
+            )
+            unresolved = [r[0] for r in cur.fetchall()]
+            for table in ("_fb_fixture", "_fb_resolved"):
+                cur.execute(f"drop table if exists {table}")
+            conn.rollback()
+            return 0, 0, unresolved
+
+        cur.execute(
+            """
+            insert into core.match (
+                competition_id, season_id, kickoff_date, status,
+                home_team_id, away_team_id, matchday, venue_name
+            )
+            select competition_id, season_id, kickoff_date, 'scheduled',
+                   home_team_id, away_team_id, matchday, venue
+              from _fb_resolved
+            on conflict (season_id, home_team_id, away_team_id) do update
+                set kickoff_date = excluded.kickoff_date,
+                    matchday     = coalesce(excluded.matchday, core.match.matchday),
+                    venue_name   = coalesce(excluded.venue_name, core.match.venue_name),
+                    updated_at   = now()
+              where core.match.kickoff_date <> excluded.kickoff_date
+                 or core.match.matchday is distinct from excluded.matchday
+            returning (core.match.created_at = core.match.updated_at) as is_new
+            """
+        )
+        touched = cur.fetchall()
+        for table in ("_fb_fixture", "_fb_resolved"):
+            cur.execute(f"drop table if exists {table}")
+    conn.commit()
+    inserted = sum(1 for (is_new,) in touched if is_new)
+    return inserted, len(touched) - inserted, []
 
 
 def link_matches(

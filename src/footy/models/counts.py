@@ -99,17 +99,26 @@ class FittedCount:
     dispersion: float | None
     referee: dict[int, float] = field(default_factory=dict)
     n_matches: int = 0
+    # What a team absent from training gets, which is the league average rather
+    # than zero. Zero happens to be right for attack, which the sum-to-zero
+    # constraint centres, and is badly wrong for concede, which carries the whole
+    # level: a promoted club would be priced at one foul a match instead of ten,
+    # and the over probability underflows to zero. Set by `fit`.
+    attack_default: float = 0.0
+    concede_default: float = 0.0
 
     def rates(
         self, home_team: int, away_team: int, referee_id: int | None = None
     ) -> tuple[float, float]:
         ref = self.referee.get(referee_id, 0.0) if referee_id is not None else 0.0
         home = np.exp(
-            self.attack.get(home_team, 0.0) + self.concede.get(away_team, 0.0)
+            self.attack.get(home_team, self.attack_default)
+            + self.concede.get(away_team, self.concede_default)
             + self.home_advantage + ref
         )
         away = np.exp(
-            self.attack.get(away_team, 0.0) + self.concede.get(home_team, 0.0) + ref
+            self.attack.get(away_team, self.attack_default)
+            + self.concede.get(home_team, self.concede_default) + ref
         )
         return float(home), float(away)
 
@@ -514,6 +523,8 @@ def fit(
         spec=spec,
         attack={t: float(attack[d.index[t]]) for t in d.teams},
         concede={t: float(concede[d.index[t]]) for t in d.teams},
+        attack_default=float(attack.mean()),
+        concede_default=float(concede.mean()),
         home_advantage=float(home_adv),
         dispersion=float(dispersion) if dispersion is not None else None,
         referee={

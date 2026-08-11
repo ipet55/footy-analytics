@@ -228,6 +228,26 @@ a documented 0.3–7.6% to 1.4–11.7%, positive in all five leagues at every li
 the strongest signal in the project outside fouls totals. It is held on
 calibration, not signal. `docs/09-count-fit-divergence.md` has the evidence.
 
+The 2026-27 calendars are loaded — 1,752 fixtures across the five leagues, from
+La Liga's opening weekend on 15 August to the last day of May — and predictions
+are stored for the opening rounds. Fixtures come from FBref's schedule pages
+rather than football-data.co.uk, whose `fixtures.csv` is a rolling one-week
+window and cannot give a season calendar. `footy load-fixtures` is safe to re-run
+and updates kickoff dates in place, which matters because television moves them
+constantly.
+
+One limitation to state plainly, because it is invisible in the output: the five
+promoted clubs have never played in a league we hold data for, so they are priced
+at the league average. That is a neutral prior rather than a good one — promoted
+teams are systematically weaker than average, and the model will overrate them
+until they have played enough matches to be rated on their own. It is at least
+now the actual average: unknown teams used to default to a parameter of zero,
+which is right for attack, centred by the sum-to-zero constraint, and wrong for
+defence and for the count models' `concede`, which carries the whole level of the
+statistic. A promoted club was being priced at one foul a match instead of ten,
+and the over probability underflowed hard enough to violate its own check
+constraint. Both models now default to the mean of their fitted parameters.
+
 ## Sources
 
 | Data | Source | Cost | Coverage | Status |

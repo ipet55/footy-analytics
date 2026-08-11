@@ -169,8 +169,9 @@ FBREF_ALIASES: dict[str, str] = {
     "Nottingham": "Nottingham Forest",
     # Italy — the schedule says "Inter", the team sheets say "Internazionale".
     "Internazionale": "Inter Milan",
-    # Spain
+    # Spain — FBref abbreviates Deportivo two different ways depending on the era.
     "Dep. La Coruña": "Deportivo La Coruna",
+    "Dep. A Coruña": "Deportivo La Coruna",
     # Germany
     "Arminia": "Arminia Bielefeld",
     "Hertha BSC": "Hertha Berlin",
@@ -197,11 +198,32 @@ FBREF_ALIASES: dict[str, str] = {
 # normally the symptom of a missing alias, which silently drops matches, so the
 # loaders stop when they meet one. Naming the exceptions keeps that alarm
 # working instead of weakening it.
+#
+# A club can leave this list by being promoted, which Elversberg duly were for
+# 2026-27. Their fixtures are real now, so declaring them absent would drop a
+# team's whole season. See FBREF_PROMOTED for the other half of that.
 FBREF_NOT_IN_LEAGUE: frozenset[str] = frozenset({
-    "Elversberg",  # 2. Bundesliga; 2024-25 play-off against Heidenheim
     "Karlsruher",  # 2014-15 play-off against Hamburg
     "BTSV",        # Eintracht Braunschweig; 2016-17 play-off against Wolfsburg
 })
+
+
+# Clubs promoted into one of the five leagues that have never played in it during
+# the era we hold, so there is no team of ours to alias them onto and one has to
+# be created. FBref's spelling on the left, the canonical name to create on the
+# right.
+#
+# Declared by hand for the same reason every other alias here is. Creating a club
+# automatically from an unrecognised name would turn a typo or a mangled label
+# into a permanent phantom team that quietly splits a real club's history in two,
+# and `footy load-fixtures` names the exact strings to add when it stops.
+FBREF_PROMOTED: dict[str, str] = {
+    # 2026-27
+    "Coventry City": "Coventry City",
+    "Racing Sant": "Racing Santander",
+    "Le Mans": "Le Mans FC",
+    "Elversberg": "SV Elversberg",
+}
 
 
 # ClubElo tracks exactly the same 167 top-flight clubs; 151 matched automatically

@@ -162,6 +162,34 @@ def test_fitted_rates_stay_near_the_data_whatever_its_level(stat, mean_count):
     assert all(abs(v) < 2.99 for v in current), "an attack hit its bound"
 
 
+def test_a_promoted_club_is_priced_at_the_league_average():
+    """A club with no history must come out near the league average, not near
+    zero.
+
+    `concede` carries the whole level of the count, so defaulting an unknown team
+    to zero priced a promoted club's match at about one foul instead of ten. That
+    is not a slightly-off prediction: the over probability underflows, and the
+    stored value violates its own check constraint. Four clubs were promoted into
+    these leagues for 2026-27, so this is a live path, not a hypothetical.
+    """
+    spec = cm.SPECS["fouls"]
+    home, away, hc, ac, days_ago, _ = synthetic(n_teams=8, n_matches=600)
+    fitted = cm.fit(home, away, hc, ac, days_ago, spec)
+
+    observed = float(np.mean(np.concatenate([hc, ac])))
+    promoted = 999
+    for rates in (fitted.rates(promoted, 0), fitted.rates(0, promoted)):
+        for rate in rates:
+            assert observed / 2 < rate < observed * 2, (
+                f"rate {rate:.3f} against a league mean of {observed:.1f}"
+            )
+
+    # And the resulting distribution has to be usable, which is the thing that
+    # actually broke: a rate of 1 makes P(over 10.5) round to zero.
+    pmf = fitted.pmf(fitted.rates(promoted, 0)[0])
+    assert 0.01 < cm.over_probability(pmf, 10.5) < 0.99
+
+
 def test_fitted_rates_recover_a_known_home_advantage():
     spec = cm.SPECS["corners"]
     home, away, hc, ac, days_ago, _ = synthetic(n_matches=600)

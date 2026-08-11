@@ -136,6 +136,48 @@ def schedule(fb) -> list[ScheduledMatch]:
     return out
 
 
+@dataclass(frozen=True)
+class Fixture:
+    """A match that has not been played yet."""
+
+    kickoff_date: date
+    home_name: str
+    away_name: str
+    matchday: int | None = None
+    venue: str | None = None
+
+
+def fixtures(fb) -> list[Fixture]:
+    """The season's calendar, whether or not the matches have been played.
+
+    The counterpart to `schedule`, which drops anything without a game_id
+    because it is only interested in matches with a page to scrape. Here that
+    same absence is the point: a fixture list is published months before any of
+    it has a result.
+
+    Rows with no date are dropped, which is how FBref renders a fixture whose
+    date is still to be confirmed.
+    """
+    df = fb.read_schedule().reset_index()
+    out = []
+    for row in df.itertuples():
+        if pd.isna(row.date):
+            continue
+        home, away = str(row.home_team).strip(), str(row.away_team).strip()
+        if not home or not away or home == "nan" or away == "nan":
+            continue
+        out.append(
+            Fixture(
+                kickoff_date=row.date.date(),
+                home_name=home,
+                away_name=away,
+                matchday=_as_int(getattr(row, "week", None)),
+                venue=_text(getattr(row, "venue", None)),
+            )
+        )
+    return out
+
+
 def _flatten(columns) -> list:
     return [
         tuple(str(x) for x in c if x and not str(x).startswith("Unnamed"))
@@ -149,6 +191,14 @@ def _as_int(value) -> int | None:
     if value is None or pd.isna(value):
         return None
     return int(value)
+
+
+def _text(value) -> str | None:
+    """A trimmed string, or None for anything pandas considers missing."""
+    if value is None or (not isinstance(value, str) and pd.isna(value)):
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def sheets(fb, game_ids: list[str]) -> dict[str, list[Appearance]]:

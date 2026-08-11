@@ -186,6 +186,72 @@ def load_xg(
         )
 
 
+@app.command("load-fixtures")
+def load_fixtures(
+    season: int = typer.Option(..., help="Season starting year, e.g. 2026."),
+    competition: str | None = typer.Option(
+        None, help="Competition code. All five leagues if omitted."
+    ),
+):
+    """Load a season's calendar from FBref, before any of it has been played.
+
+    Every other loader here arrives with results attached, which is fine for
+    history and useless for a fixture the app wants to show a price for. This
+    writes scheduled matches with no score, creating the season row if needed.
+
+    Safe to re-run, and worth re-running: kickoff dates move constantly for
+    television, and a re-run updates them without touching any result.
+    """
+    from footy.load import fbref as fb_load
+    from footy.sources import fbref as fb
+
+    leagues = [competition] if competition else list(fb.LEAGUE_KEYS)
+    totals = Counter()
+    for code in leagues:
+        label = f"{code} {season}-{(season + 1) % 100:02d}"
+        console.print(f"\n[bold]{label}[/bold]")
+        fixtures = fb.fixtures(fb.reader(code, season))
+        if not fixtures:
+            console.print("[yellow]  no fixtures published yet[/yellow]")
+            continue
+        console.print(
+            f"  {len(fixtures)} fixtures, {fixtures[0].kickoff_date} to "
+            f"{fixtures[-1].kickoff_date}"
+        )
+        with db.connect() as conn:
+            names = {n for f in fixtures for n in (f.home_name, f.away_name)}
+            country = fb_load.country_for(code)
+            created = fb_load.seed_promoted(conn, names, country)
+            if created:
+                console.print(f"  promoted clubs created: {', '.join(created)}")
+            added, unresolved = fb_load.register_aliases(conn, names, country)
+            if added:
+                console.print(f"  {added} FBref team aliases registered")
+            if unresolved:
+                console.print(f"[red]  unresolved team names: {unresolved}[/red]")
+                console.print("  They are queued in core.unresolved_alias.")
+                totals["failed"] += 1
+                continue
+
+            inserted, moved, still_unresolved = fb_load.store_fixtures(
+                conn, code, season, fixtures
+            )
+            if still_unresolved:
+                console.print(f"[red]  unresolved: {still_unresolved}[/red]")
+                totals["failed"] += 1
+                continue
+            console.print(f"  [green]{inserted} new[/green], {moved} rescheduled")
+            totals["inserted"] += inserted
+            totals["moved"] += moved
+
+    console.print(
+        f"\n{totals['inserted']} fixtures added, {totals['moved']} rescheduled"
+        + (f", [red]{totals['failed']} leagues failed[/red]" if totals["failed"] else "")
+    )
+    if totals["failed"]:
+        raise typer.Exit(1)
+
+
 @app.command("load-lineups")
 def load_lineups(
     competition: str = typer.Option("ENG-PL", help="Competition code."),
