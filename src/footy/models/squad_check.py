@@ -1,8 +1,16 @@
-"""Does knowing the eleven improve the goals model? Measured, and it does.
+"""Does knowing the eleven improve the goals model? Measured, and no.
 
-The first thing in this project that has. The feature blend and per-team home
-advantage were both built, measured and rejected; this one replicates across
-every held-out season, so it gets a harness rather than an obituary.
+It looked for a while like the first thing in this project that did. Continuity of
+the starting eleven gains 0.0102 of 1X2 log-loss in the Premier League on every
+held-out season, with a dose-response — and then gains +0.0004 across the other
+four leagues, interval -0.0011 to +0.0018.
+
+The harness is kept anyway, for the reason `docs/06` explains: the mistake was
+worth more than the finding. Matches within a season are not independent trials,
+because the correction is fitted once per season and applied to all of them, so
+England's own result is p = 0.100 once clustered at the level the design actually
+varies at. Anything measured here now has to replicate across leagues with
+season-clustered significance, which is what `style_check` was built to do.
 
 The correction is multiplicative on the fitted rate, which makes the plain model
 the special case where every coefficient is zero:

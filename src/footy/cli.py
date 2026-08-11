@@ -638,11 +638,14 @@ def backtest_counts(
 def squad_check(
     competition: str = typer.Option("ENG-PL", help="Competition code."),
 ):
-    """Ask whether knowing the starting eleven improves the goals model. It does.
+    """Ask whether knowing the starting eleven improves the goals model. It does not.
 
     Holds each season out in turn, training the correction only on what came
     before it, and reports the intercept-only variant alongside so that a gain
     from plain recalibration cannot be mistaken for a gain from squad strength.
+
+    England gains and the other four leagues do not; see `docs/06`. Defaults to
+    England, so run it with `--competition ESP-LL` to see the failure.
 
     Needs team sheets, so run `footy load-lineups` first.
     """
@@ -661,6 +664,88 @@ def squad_check(
         console.print("[yellow]not enough seasons with team sheets to hold one out[/yellow]")
         raise typer.Exit(1)
     sc.report(results)
+
+
+@app.command("style-check")
+def style_check(
+    competition: str | None = typer.Option(
+        None, help="Competition code. All five leagues if omitted."
+    ),
+    features_from: str = typer.Option(
+        "2015-08-01", help="Start walking forward from this date."
+    ),
+    seasons: str = typer.Option(
+        "2018-2025", help="Held-out seasons, as start years."
+    ),
+):
+    """Ask whether how a team plays adds to how well the model thinks it plays.
+
+    Pressing intensity and territorial penetration are stable team traits that
+    Dixon-Coles cannot see, since it reduces a club to one attack and one
+    defence rating. This holds each season out in turn, in every league at once,
+    and clusters significance by season and by league because league-seasons are
+    not independent trials.
+    """
+    from datetime import date as _date
+
+    from footy.models import style_check as sc
+
+    lo, hi = (int(y) for y in seasons.split("-"))
+    years = tuple(range(lo, hi + 1))
+    start = _date.fromisoformat(features_from)
+    leagues = (competition,) if competition else sc.LEAGUES
+
+    results = []
+    for code in leagues:
+        console.print(f"[dim]{code}: walking forward, refitting fortnightly...[/dim]")
+        try:
+            results += sc.run(code, features_from=start, seasons=years)
+        except RuntimeError as exc:
+            console.print(f"[yellow]{code}: {exc}[/yellow]")
+    if not results:
+        console.print("[yellow]not enough history to hold a season out[/yellow]")
+        raise typer.Exit(1)
+    sc.report(results)
+
+
+@app.command("style-counts-check")
+def style_counts_check(
+    stat: str = typer.Option("fouls", help="fouls, cards, corners or shots."),
+    competition: str | None = typer.Option(
+        None, help="Competition code. All five leagues if omitted."
+    ),
+    features_from: str = typer.Option(
+        "2015-08-01", help="Start walking forward from this date."
+    ),
+    seasons: str = typer.Option(
+        "2018-2025", help="Held-out seasons, as start years."
+    ),
+):
+    """Ask whether how a team plays improves the count markets.
+
+    Pressing has a mechanism here that it lacks for goals: a side that hunts the
+    ball high commits more fouls, and fouls become cards.
+    """
+    from datetime import date as _date
+
+    from footy.models import style_counts as sc
+
+    lo, hi = (int(y) for y in seasons.split("-"))
+    years = tuple(range(lo, hi + 1))
+    start = _date.fromisoformat(features_from)
+    leagues = (competition,) if competition else sc.LEAGUES
+
+    results = []
+    for code in leagues:
+        console.print(f"[dim]{code}: walking forward, refitting monthly...[/dim]")
+        try:
+            results += sc.run(stat, code, features_from=start, seasons=years)
+        except RuntimeError as exc:
+            console.print(f"[yellow]{code}: {exc}[/yellow]")
+    if not results:
+        console.print("[yellow]not enough history to hold a season out[/yellow]")
+        raise typer.Exit(1)
+    sc.report(results, stat)
 
 
 @app.command("blend-check")

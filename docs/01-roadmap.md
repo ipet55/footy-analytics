@@ -144,16 +144,47 @@ trips, and nothing anywhere records who is fit to play.
 - Retrain Phase-2 models with these features; keep them only if the
   walk-forward numbers improve.
 
-### Phase 5 — style and matchup features (user's point 3)
-- Style vectors per team from what we already store: PPDA (pressing),
-  deep completions, directness (xG per shot), shot volume vs conversion,
-  possession once FBref/API-Football fills it.
-- Interaction features (e.g. high-press vs build-up teams) in the GBM;
-  Dixon-Coles attack×defence already covers strength asymmetry —
-  this is specifically about *how*, not *how good*.
-- Note: opponent-adjusted averages (user's point 4) are already solved by
-  Elo differentials + Dixon-Coles parameters; add opponent-strength-weighted
-  rolling windows to the feature layer as a cheap extra.
+### Phase 5 — style and matchup features (user's point 3) — DONE, rejected
+Built and measured across forty held-out league-seasons. Pressing and deep
+completions add nothing to goals, fouls or cards in any of five specifications,
+and every added parameter makes it monotonically worse.
+
+Not a data problem: the measures are excellent, with split-half reliability of
+0.91 for pressing and season-to-season persistence of r=0.73. That stability is
+exactly why they fail — a trait the model has been absorbing into a team's attack
+and defence ratings for a decade carries no residual information.
+
+Closed as a result, including the parts not yet started:
+- Style interactions in the GBM are not worth building. The main effects carry
+  nothing, and the blend already lost this argument in `docs/04`.
+- Possession and passing data would not change it. The constraint is not the
+  breadth of the style description.
+- The one direction left, if ever revisited, is a *change* of style rather than
+  its level, driven by a manager-change flag rather than a rolling delta. The
+  rolling-delta version was tested and failed (`docs/08`).
+
+Opponent-adjusted averages (user's point 4) remain solved by Elo differentials
+and the Dixon-Coles parameters.
+
+`docs/08-style-of-play.md`; reproduce with `footy style-check` and
+`footy style-counts-check`.
+
+### Phase 5b — recalibrate the per-team count markets
+Surfaced by the style work: a start-point bug had the per-team count models
+returning fouls rates of 1e12 in four leagues out of five
+(`docs/09-count-fit-divergence.md`). Fixed, with a regression test, and it left
+every shipped number bit-identical.
+
+It also promoted per-team shots from a documented 0.3–7.6% to 1.4–11.7%, positive
+in all five leagues at every line — the strongest signal here outside fouls
+totals. It is held on *calibration*, not signal: worst reliability buckets of
+14.8% in France and 13.3% in Italy against a standard of about 8%.
+
+- Better recalibration for per-team shots. Currently one isotonic fit per line
+  per scope; the miscalibration is concentrated in France and Italy, so the
+  question is whether it is a sample-size problem or a league one.
+- Per-team fouls needs signal work before calibration is worth attempting:
+  Germany is still negative at the 8.5 line.
 
 ### Phase 6 — live path + prediction summaries
 - GitHub Actions cron: fetch upcoming fixtures, lineups when announced,

@@ -105,7 +105,7 @@ mistake. Details in `web/README.md`.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest        # 69 tests, ~40s
+.venv/bin/python -m pytest        # 99 tests, ~35s
 ```
 
 The model tests check the analytic gradients against finite differences, because
@@ -129,8 +129,9 @@ Validated walk-forward on 2022/23–2025/26, all five leagues. Detail in
 | Fouls, match total | 5.4–6.5% | shipping |
 | Corners, per team | 1.9–6.3% | shipping |
 | Shots, match total | 0.8–4.5% | shipping |
-| Cards; per-team shots | 0.3–7.6% | held: percentages not accurate enough yet |
+| Shots, per team, after the fit bug was fixed | 1.4–11.7%, positive in all five leagues | held: France and Italy miscalibrated |
 | Cards, match total, after referees landed | 0.6–5.0% | still held — Italy would qualify alone, Germany and France do not |
+| Fouls, per team | -1.8–9.4% | not shipping — Germany negative, calibration poor |
 | Corners, match total | ~0% | not shipping — no signal exists |
 
 Two rules the numbers imposed: published probabilities are always recalibrated,
@@ -201,6 +202,31 @@ Pooled over 15 league-seasons that is p = 0.039; clustered by league it is p ≈
 0.20, so it is suggestive rather than established. Cards still do not ship — Italy
 alone would now qualify, Germany and France are nowhere near.
 `docs/07-referees.md` has the evidence.
+
+Style of play is the cleanest rejection of the four, because for once the data is
+beyond reproach. Understat's PPDA and deep completions cover every team-match in
+all five leagues back to 2014-15, and they measure real traits: split-half
+reliability is 0.91 for pressing and 0.93 for deep completions, and pressing
+persists from season to season at r=0.73. Across **forty held-out league-seasons**
+they add nothing to goals, fouls or cards, in any of five specifications, and
+every added parameter makes it monotonically worse. The explanation is the same
+property that made them look promising — a trait that stable is already inside the
+attack and defence ratings the models fit over a decade, so restating it is close
+to regressing on parameters the model already has. Reliability and predictive
+value are different questions. `docs/08-style-of-play.md` has the evidence, and
+closes roadmap Phase 5.
+
+That investigation paid for itself by surfacing a real bug rather than a feature.
+The per-team count models were **returning fouls rates of 1e12 in four leagues out
+of five**, and shots rates of 1e6 in two, because `concede` started at half the
+level it has to carry while `attack` is pinned to sum to zero — so the optimiser
+made up the difference by driving parameters into their bounds. Cards and corners
+were unaffected, their means being small enough to start from, and the match
+totals were never affected at all because `fit_total` has an explicit intercept.
+Fixing it left every shipped number bit-identical and promoted per-team shots from
+a documented 0.3–7.6% to 1.4–11.7%, positive in all five leagues at every line —
+the strongest signal in the project outside fouls totals. It is held on
+calibration, not signal. `docs/09-count-fit-divergence.md` has the evidence.
 
 ## Sources
 
