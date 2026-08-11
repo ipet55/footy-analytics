@@ -252,32 +252,47 @@ def load_lineups(
         ids = list(todo)
         dates = {m.game_id: m.kickoff_date for m in scheduled}
         stored = 0
+        skipped: list[str] = []
+        season_started = time.time()
         try:
             for i in range(0, len(ids), batch):
                 chunk = ids[i : i + batch]
-                sheets = fb.sheets(reader, chunk)
+                sheets, failed = fb.sheets_where_possible(reader, chunk)
+                skipped += failed
                 written, bad = fb_load.write_batch(country, todo, sheets, dates)
                 if bad:
                     console.print(f"[red]  unresolved sheet names: {bad}[/red]")
                     raise typer.Exit(1)
                 stored += written
                 done = i + len(chunk)
-                rate = (time.time() - started) / max(done, 1)
+                rate = (time.time() - season_started) / max(done, 1)
+                note = f", {len(skipped)} unreadable" if skipped else ""
                 console.print(
                     f"    {done}/{len(ids)} matches, {stored:,} appearances, "
-                    f"{rate:.1f}s each, ~{rate * (len(ids) - done) / 60:.0f}m left"
+                    f"{rate:.1f}s each, ~{rate * (len(ids) - done) / 60:.0f}m left{note}"
                 )
         except Exception as exc:
             fb_load.close_run(run_id, "error", len(ids), stored, str(exc)[:500])
             raise
         fb_load.close_run(run_id, "ok", len(ids), stored)
         totals["appearances"] += stored
-        totals["matches"] += len(ids)
+        totals["matches"] += len(ids) - len(skipped)
+        totals["skipped"] += len(skipped)
+        if skipped:
+            console.print(
+                f"[yellow]  {len(skipped)} matches could not be read; re-run to "
+                f"retry them[/yellow]"
+            )
 
     console.print(
         f"\n[green]{totals['matches']:,} matches, {totals['appearances']:,} "
         f"appearances in {(time.time() - started) / 60:.0f}m[/green]"
     )
+    if totals["skipped"]:
+        console.print(
+            f"[yellow]{totals['skipped']:,} matches were unreadable and are still "
+            f"pending. Re-run the same command to pick them up.[/yellow]"
+        )
 
 
 @app.command("check-lineup-names")

@@ -190,3 +190,37 @@ def sheets(fb, game_ids: list[str]) -> dict[str, list[Appearance]]:
             )
         )
     return out
+
+
+def sheets_where_possible(
+    fb, game_ids: list[str], cool_off: int = 120
+) -> tuple[dict[str, list[Appearance]], list[str]]:
+    """Fetch a batch, giving up on individual matches rather than on the league.
+
+    soccerdata already retries a page five times before raising, so a failure
+    here means a CAPTCHA or a block rather than a blip. The batch is then retried
+    one match at a time, because the usual cause is a single bad page and the
+    other nine are fine — and one unreadable page previously cost the remaining
+    1,770 matches of a league.
+
+    Skipped matches are simply not stored, so `core.lineup_coverage` still
+    describes exactly what landed and a later re-run picks them up.
+    """
+    import time
+
+    try:
+        return sheets(fb, game_ids), []
+    except Exception:
+        pass
+
+    # Whatever blocked the batch is unlikely to clear instantly.
+    time.sleep(cool_off)
+
+    out: dict[str, list[Appearance]] = {}
+    failed: list[str] = []
+    for game_id in game_ids:
+        try:
+            out.update(sheets(fb, [game_id]))
+        except Exception:
+            failed.append(game_id)
+    return out, failed
