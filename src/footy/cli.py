@@ -295,6 +295,74 @@ def load_lineups(
         )
 
 
+@app.command("load-referees")
+def load_referees(
+    competitions: str = typer.Option(
+        "ESP-LL,ITA-SA,GER-BL,FRA-L1", help="Comma-separated competition codes."
+    ),
+    from_year: int = typer.Option(2014, help="Earliest season to load."),
+    to_year: int = typer.Option(2025, help="Latest season to load."),
+):
+    """Fill in referees from the FBref schedule.
+
+    football-data.co.uk publishes the referee only for England, which left the
+    cards models with the single biggest driver of a booking missing in four
+    leagues out of five. FBref names the referee on its schedule page at full
+    coverage back to 2014-15, and that is one request per season rather than per
+    match — the whole backfill is a few minutes.
+
+    England is excluded by default. Its referees are already loaded under
+    football-data's initial-and-surname convention, and adding FBref's full names
+    would duplicate every official rather than match them.
+    """
+    from footy.load import fbref as fb_load
+    from footy.sources import fbref as fb
+
+    codes = [c.strip() for c in competitions.split(",") if c.strip()]
+    totals = Counter()
+
+    for competition in codes:
+        country = fb_load.country_for(competition)
+        console.print(f"\n[bold]{competition}[/bold]")
+        for year in range(from_year, to_year + 1):
+            label = f"{year}-{(year + 1) % 100:02d}"
+            try:
+                scheduled = fb.schedule(fb.reader(competition, year))
+            except Exception as exc:
+                console.print(f"  {label} [red]unreadable: {str(exc)[:70]}[/red]")
+                totals["failed"] += 1
+                continue
+
+            with db.connect() as conn:
+                names = {m.home_name for m in scheduled} | {
+                    m.away_name for m in scheduled
+                }
+                _, unresolved = fb_load.register_aliases(conn, names, country)
+                if unresolved:
+                    console.print(f"  {label} [red]unresolved teams: {unresolved}[/red]")
+                    totals["failed"] += 1
+                    continue
+                linked, _ = fb_load.link_matches(conn, competition, year, scheduled)
+                added, updated = fb_load.store_referees(
+                    conn, linked, scheduled, country
+                )
+                conn.commit()
+
+            totals["referees"] += added
+            totals["matches"] += updated
+            console.print(
+                f"  {label} {updated:>4} matches given a referee"
+                + (f", {added} new officials" if added else "")
+            )
+
+    console.print(
+        f"\n[green]{totals['matches']:,} matches, {totals['referees']:,} referees"
+        f"[/green]"
+    )
+    if totals["failed"]:
+        console.print(f"[yellow]{totals['failed']} seasons skipped[/yellow]")
+
+
 @app.command("check-lineup-names")
 def check_lineup_names(
     competitions: str = typer.Option(

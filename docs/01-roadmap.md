@@ -21,8 +21,10 @@ This is the master plan. Each phase ends with something measurable.
 | Squad strength | **Measured and rejected.** Lineup continuity gains 0.0102 of 1X2 log-loss in ENG-PL and +0.0004 across the other four leagues (4,173 matches). Clustered by season, even England is p = 0.100 — never significant (`docs/06-squad-strength.md`) |
 | Serving squad strength | Moot. A predicted eleven from free data recovers 10% of a gain that does not replicate, so no lineup feed is worth buying |
 | Dixon-Coles 1X2 | Log-loss 0.98583 vs market 0.96031 — 76% of the base-rate-to-market gap closed |
-| Count models (corners/cards/fouls/shots) | In progress — totals-variance fix written, **not yet re-backtested** |
-| DB size | 402 MB of the 500 MB free tier |
+| Count models (corners/cards/fouls/shots) | Backtested; nine markets shipping, seven held, corners totals rejected |
+| Referees | 100% coverage in all five leagues, backfilled from the FBref schedule. Previously England only (`docs/07-referees.md`) |
+| Cards | Improved by the referee term where referees actually vary (ESP +0.0077, ITA +0.0118), unchanged elsewhere. **Still held** — Italy alone would qualify, Germany and France do not |
+| DB size | 474 MB, on Pro |
 
 ## Verdict on the FootyStats API
 

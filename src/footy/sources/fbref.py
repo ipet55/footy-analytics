@@ -71,6 +71,7 @@ class ScheduledMatch:
     kickoff_date: date
     home_name: str
     away_name: str
+    referee: str | None = None
 
 
 @dataclass(frozen=True)
@@ -107,18 +108,29 @@ def schedule(fb) -> list[ScheduledMatch]:
 
     A missing game_id means the fixture has no match page yet, which is how
     unplayed fixtures appear.
+
+    The schedule also names the referee, at full coverage back to 2014-15. That
+    is one request per season for something football-data.co.uk publishes only
+    for England.
     """
     df = fb.read_schedule().reset_index()
+    has_referee = "referee" in df.columns
     out = []
     for row in df.itertuples():
         if not isinstance(row.game_id, str) or pd.isna(row.date):
             continue
+        referee = getattr(row, "referee", None) if has_referee else None
         out.append(
             ScheduledMatch(
                 game_id=row.game_id,
                 kickoff_date=row.date.date(),
                 home_name=str(row.home_team),
                 away_name=str(row.away_team),
+                referee=(
+                    str(referee).strip()
+                    if referee is not None and not pd.isna(referee) and str(referee).strip()
+                    else None
+                ),
             )
         )
     return out

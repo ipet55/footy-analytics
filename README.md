@@ -130,6 +130,7 @@ Validated walk-forward on 2022/23–2025/26, all five leagues. Detail in
 | Corners, per team | 1.9–6.3% | shipping |
 | Shots, match total | 0.8–4.5% | shipping |
 | Cards; per-team shots | 0.3–7.6% | held: percentages not accurate enough yet |
+| Cards, match total, after referees landed | 0.6–5.0% | still held — Italy would qualify alone, Germany and France do not |
 | Corners, match total | ~0% | not shipping — no signal exists |
 
 Two rules the numbers imposed: published probabilities are always recalibrated,
@@ -187,11 +188,26 @@ is the departure from it — and that part cannot be predicted from past team
 sheets. The player layer is kept regardless: the features were the wrong
 hypothesis, but the data is validated and cheap to query.
 
+Referees were the one genuine data gap that closed. `core.match.referee_id` was
+100% for England and 0% everywhere else, because football-data.co.uk publishes the
+column only for `E0` — so the cards model's referee term, built in Phase 1, had
+nothing to fit in four leagues out of five. FBref names the referee on its
+*schedule* page at full coverage back to 2014-15, one request per season rather
+than per match, so 13,145 matches and 201 officials cost minutes. Referees vary by
+1.2 to 2.2 cards a match depending on the league, and the improvement to cards
+**tracks that spread across independent leagues**: Spain and Italy gain +0.0077
+and +0.0118, the three leagues with tighter referee variation gain nothing.
+Pooled over 15 league-seasons that is p = 0.039; clustered by league it is p ≈
+0.20, so it is suggestive rather than established. Cards still do not ship — Italy
+alone would now qualify, Germany and France are nowhere near.
+`docs/07-referees.md` has the evidence.
+
 ## Sources
 
 | Data | Source | Cost | Coverage | Status |
 |---|---|---|---|---|
 | Results, shots, corners, fouls, cards, odds | football-data.co.uk | Free | 2014+, all 12 seasons | Implemented |
+| Referees | FBref schedule | Free | 2014+, all five leagues | Implemented |
 | xG, npxG, PPDA, deep completions | Understat | Free | 2014+ | Next |
 | Elo ratings | ClubElo | Free | Full history | Next |
 | Possession, passes, progressive actions | FBref | Free | 2017+ | Planned |

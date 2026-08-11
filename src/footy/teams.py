@@ -169,15 +169,21 @@ FBREF_ALIASES: dict[str, str] = {
     "Nottingham": "Nottingham Forest",
     # Italy — the schedule says "Inter", the team sheets say "Internazionale".
     "Internazionale": "Inter Milan",
+    # Spain
+    "Dep. La Coruña": "Deportivo La Coruna",
     # Germany
     "Arminia": "Arminia Bielefeld",
     "Hertha BSC": "Hertha Berlin",
     "Mönchengladbach": "Borussia Monchengladbach",
     "Düsseldorf": "Fortuna Dusseldorf",
+    "Paderborn 07": "Paderborn",
     # norm_name strips the umlaut but does not add the "FC" our canonical has.
     "Köln": "FC Koln",
     # France
     "PSG": "Paris Saint-Germain",
+    "Evian": "Evian Thonon Gaillard",
+    # Gazélec is GFC Ajaccio, not the older AC Ajaccio, and both are in the data.
+    "Gazélec Ajaccio": "GFC Ajaccio",
 }
 
 
@@ -193,6 +199,8 @@ FBREF_ALIASES: dict[str, str] = {
 # working instead of weakening it.
 FBREF_NOT_IN_LEAGUE: frozenset[str] = frozenset({
     "Elversberg",  # 2. Bundesliga; 2024-25 play-off against Heidenheim
+    "Karlsruher",  # 2014-15 play-off against Hamburg
+    "BTSV",        # Eintracht Braunschweig; 2016-17 play-off against Wolfsburg
 })
 
 

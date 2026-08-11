@@ -268,6 +268,65 @@ def country_for(competition_code: str) -> str:
     return COMPETITION_COUNTRY[competition_code]
 
 
+def store_referees(
+    conn: psycopg.Connection,
+    linked: dict[str, int],
+    scheduled: list[ScheduledMatch],
+    country: str,
+) -> tuple[int, int]:
+    """Fill core.match.referee_id from the FBref schedule.
+
+    Only matches with no referee yet are touched. England already has referees
+    from football-data.co.uk under a different convention — "A Taylor" there,
+    "Anthony Taylor" here — and overwriting them would orphan the ids the count
+    models already use while creating a duplicate for every official.
+
+    Returns (referees inserted, matches updated).
+    """
+    named = [
+        (linked[m.game_id], m.referee)
+        for m in scheduled
+        if m.referee and m.game_id in linked
+    ]
+    if not named:
+        return 0, 0
+
+    with conn.cursor() as cur:
+        cur.execute("drop table if exists _fb_ref")
+        cur.execute("create temporary table _fb_ref (match_id bigint, name text)")
+        cur.executemany("insert into _fb_ref values (%s, %s)", named)
+
+        cur.execute(
+            """
+            insert into core.referee (canonical_name, country)
+            select distinct on (core.norm_name(r.name)) r.name, %s
+              from _fb_ref r
+             where not exists (
+                   select 1 from core.referee x
+                    where core.norm_name(x.canonical_name) = core.norm_name(r.name))
+             order by core.norm_name(r.name), r.name
+            on conflict do nothing
+            """,
+            (country,),
+        )
+        inserted = cur.rowcount
+
+        cur.execute(
+            """
+            update core.match m
+               set referee_id = ref.referee_id
+              from _fb_ref r
+              join core.referee ref
+                on core.norm_name(ref.canonical_name) = core.norm_name(r.name)
+             where m.match_id = r.match_id
+               and m.referee_id is null
+            """
+        )
+        updated = cur.rowcount
+        cur.execute("drop table _fb_ref")
+    return inserted, updated
+
+
 def close_run(
     run_id: int, status: str, read: int, written: int, error: str | None = None
 ) -> None:
