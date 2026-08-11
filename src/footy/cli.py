@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 
 import typer
 from rich.console import Console
@@ -278,6 +278,68 @@ def load_lineups(
         f"\n[green]{totals['matches']:,} matches, {totals['appearances']:,} "
         f"appearances in {(time.time() - started) / 60:.0f}m[/green]"
     )
+
+
+@app.command("check-lineup-names")
+def check_lineup_names(
+    competitions: str = typer.Option(
+        "ESP-LL,ITA-SA,GER-BL,FRA-L1", help="Comma-separated competition codes."
+    ),
+    from_year: int = typer.Option(2020, help="Earliest season to check."),
+    to_year: int = typer.Option(2024, help="Latest season to check."),
+):
+    """Find every FBref team name a scrape would choke on, before running it.
+
+    `load-lineups` refuses to continue on a name it cannot resolve, which is the
+    right call — a guessed alias corrupts joins silently — but it means a name
+    first used in April aborts a run that started in August.
+
+    This finds them cheaply. Every club plays exactly once on the opening
+    matchday, so the first eleven matches of a season contain every team-sheet
+    spelling that season will ever use. Twenty seasons cost about half an hour
+    instead of a night, and the fetched sheets are cached, so the real run
+    reuses them rather than repeating them.
+    """
+    from footy.load import fbref as fb_load
+    from footy.sources import fbref as fb
+
+    codes = [c.strip() for c in competitions.split(",") if c.strip()]
+    gaps: dict[str, set[str]] = defaultdict(set)
+
+    for competition in codes:
+        country = fb_load.country_for(competition)
+        for year in range(from_year, to_year + 1):
+            label = f"{competition} {year}-{(year + 1) % 100:02d}"
+            reader = fb.reader(competition, year)
+            scheduled = fb.schedule(reader)
+
+            opening = sorted(scheduled, key=lambda m: m.kickoff_date)[:11]
+            sheets = fb.sheets(reader, [m.game_id for m in opening])
+            found = {
+                "schedule": {m.home_name for m in scheduled}
+                | {m.away_name for m in scheduled},
+                "sheets": {a.team_name for apps in sheets.values() for a in apps},
+            }
+
+            with db.connect() as conn:
+                for where, names in found.items():
+                    _, unresolved = fb_load.register_aliases(conn, names, country)
+                    gaps[competition] |= set(unresolved)
+                    if unresolved:
+                        console.print(f"  [red]{label} {where}: {unresolved}[/red]")
+                conn.commit()
+            if not gaps[competition]:
+                console.print(f"  [green]{label} ok[/green]")
+
+    outstanding = {k: sorted(v) for k, v in gaps.items() if v}
+    if not outstanding:
+        console.print("\n[green]Every name resolves. Safe to run load-lineups.[/green]")
+        return
+    console.print("\n[red]Add these to FBREF_ALIASES in footy/teams.py:[/red]")
+    for competition, names in outstanding.items():
+        for name in names:
+            console.print(f'    "{name}": "...",  # {competition}')
+    raise typer.Exit(1)
 
 
 @app.command("load-elo")

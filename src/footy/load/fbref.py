@@ -25,7 +25,7 @@ import psycopg
 
 from footy import db
 from footy.sources.fbref import SOURCE_CODE, STAT_MAP, Appearance, ScheduledMatch
-from footy.teams import COMPETITION_COUNTRY, FBREF_ALIASES
+from footy.teams import COMPETITION_COUNTRY, FBREF_ALIASES, FBREF_NOT_IN_LEAGUE
 
 STAT_COLUMNS = list(STAT_MAP.values())
 
@@ -42,7 +42,14 @@ def register_aliases(
     Three rules, in order of confidence: an exact canonical-name match, a
     spelling another source has already registered for a club in the same
     country, and a small hand-written table for the rest.
+
+    Clubs declared as not belonging to the league are dropped first. They are
+    play-off opponents from the division below, so they have no team of ours to
+    resolve to and no match of ours to appear in.
     """
+    names = names - FBREF_NOT_IN_LEAGUE
+    if not names:
+        return 0, []
     with conn.cursor() as cur:
         cur.execute("drop table if exists _fb_name")
         cur.execute(

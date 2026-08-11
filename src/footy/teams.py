@@ -161,9 +161,39 @@ UNDERSTAT_ALIASES: dict[str, str] = {
 # source's registered alias resolves. FBref is also inconsistent with itself —
 # its schedule says "Manchester Utd" where its team sheets say "Manchester
 # United" — but both of those resolve on their own, so only genuine gaps go here.
+#
+# Harvest these with `footy check-lineup-names` rather than guessing. Every entry
+# below was reported by that command or by a scrape that refused to continue.
 FBREF_ALIASES: dict[str, str] = {
+    # England
     "Nottingham": "Nottingham Forest",
+    # Italy — the schedule says "Inter", the team sheets say "Internazionale".
+    "Internazionale": "Inter Milan",
+    # Germany
+    "Arminia": "Arminia Bielefeld",
+    "Hertha BSC": "Hertha Berlin",
+    "Mönchengladbach": "Borussia Monchengladbach",
+    "Düsseldorf": "Fortuna Dusseldorf",
+    # norm_name strips the umlaut but does not add the "FC" our canonical has.
+    "Köln": "FC Koln",
+    # France
+    "PSG": "Paris Saint-Germain",
 }
+
+
+# Clubs FBref lists on a league's page that were never in that league. The
+# Bundesliga relegation play-off is two legs against the third-placed second
+# division club, so it appears in the schedule while belonging to no top flight
+# season we store — FBref lists 308 Bundesliga matches for 2024-25 where the
+# league itself played 306.
+#
+# These are declared rather than skipped quietly. An unresolvable name is
+# normally the symptom of a missing alias, which silently drops matches, so the
+# loaders stop when they meet one. Naming the exceptions keeps that alarm
+# working instead of weakening it.
+FBREF_NOT_IN_LEAGUE: frozenset[str] = frozenset({
+    "Elversberg",  # 2. Bundesliga; 2024-25 play-off against Heidenheim
+})
 
 
 # ClubElo tracks exactly the same 167 top-flight clubs; 151 matched automatically
