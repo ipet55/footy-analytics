@@ -1,14 +1,16 @@
-# Squad strength: measured, and it works
+# Squad strength: works in England, nowhere else so far
 
-Written 2026-08-10. The first thing in this project that has improved a model.
-The feature blend (`docs/04`) and per-team home advantage (`docs/05`) were both
-built properly, measured properly and rejected. This one replicates on every
-held-out season, so it gets shipped rather than filed.
+Written 2026-08-10, substantially revised 2026-08-11 after the result failed to
+replicate.
 
-The finding, in one line: **how much of today's eleven is the established eleven
-is worth 0.0102 of 1X2 log-loss, which is about a third of the remaining gap to
-the bookmaker's closing line.** Nothing else about the team sheet mattered
-nearly as much, and nothing at all showed up in over/under.
+**The original claim was that lineup continuity gains 0.0102 of 1X2 log-loss.
+That still holds for the Premier League, and only for the Premier League.**
+Spain gains 0.0006 and Italy 0.0004, both indistinguishable from zero. The
+sections below are kept in the order they were written, because the way this one
+went wrong is more useful than the finding itself.
+
+Read `## The replication, and what it costs the claim` before relying on
+anything above it.
 
 ## What the models could not see
 
@@ -122,6 +124,62 @@ This is a clean negative result with a clear consequence: **serving this feature
 requires a pre-match lineup or injury feed.** Until then the measurement stands
 as a measurement, and the ceiling on any lineup feed we might buy is 0.0102 —
 0.0092 of it above what we can already manage for free.
+
+## The replication, and what it costs the claim
+
+Spain and Italy were scraped on 2026-08-11: five seasons each, 1,900 matches per
+league, and the data is sound — goals reconcile with the official score in 100%
+of matches in both, and every team sheet has eleven starters bar five of Spain's
+3,800. The same harness, the same feature, the same held-out seasons:
+
+| League | Matches | Per-match gain | Std err | t | Verdict |
+|---|---|---|---|---|---|
+| ENG-PL | 1,136 | +0.0102 | 0.0026 | 3.90 | significant |
+| ESP-LL | 1,136 | +0.0006 | 0.0008 | 0.67 | nothing |
+| ITA-SA | 1,135 | +0.0004 | 0.0007 | 0.52 | nothing |
+| **Pooled** | **3,407** | **+0.0037** | **0.0010** | **3.91** | driven entirely by England |
+
+The pooled figure is significant and it is also misleading: subtract England and
+it collapses. England against the other two differs by 0.0097 with a standard
+error of 0.0027, so the leagues disagree by more than chance allows.
+
+It is not a data problem and it is not the feature behaving differently.
+Continuity has the same spread everywhere — standard deviation 0.10 in all three
+— and rotation is comparable, with 68-72% of minutes going to a club's top
+eleven. What differs is the fitted relationship:
+
+| League | Own continuity | Opponent's |
+|---|---|---|
+| ENG-PL | +0.0331 | -0.0021 |
+| ESP-LL | +0.0175 | -0.0049 |
+| ITA-SA | -0.0007 | -0.0196 |
+
+The "coefficients are the right shape without being told to be" argument made
+above does not survive this. In Italy a team's own continuity has no effect at
+all.
+
+### What this says about the method, not just the feature
+
+The original evidence was three held-out seasons of one league, all positive,
+with a monotonic dose-response. That felt conclusive and it was not, for a
+reason worth keeping: **seasons within a league are not independent trials.** The
+same twenty clubs recur, the fitted ratings carry the same biases from one year
+to the next, and a correction that exploits those biases will look good in every
+season of that league while carrying nothing to another. Three seasons of England
+is closer to one experiment than three.
+
+The honest reading is that we cannot yet tell a genuine English peculiarity —
+more congestion, no winter break, deeper squads — from a false positive that
+three correlated seasons failed to catch. With two clean replications returning
+nothing, the second is the safer assumption.
+
+### Consequences
+
+- **Not shipped.** The correction stays out of the serving path.
+- **The lineup feed is not worth buying on this evidence.** The measured ceiling
+  of 0.0092 above free data applies to one league out of three tested.
+- Germany and France are still scraping and will be added here. If both come back
+  flat, England is a curiosity rather than a finding.
 
 ## Why 1X2 and not over/under
 

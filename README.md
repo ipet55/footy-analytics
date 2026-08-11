@@ -160,25 +160,31 @@ sits at -0.055. It describes the past and predicts nothing.
 `docs/05-venue-effects.md` has the evidence; `venue_penalty` on
 `dixon_coles.fit` is off by default.
 
-Squad strength is the one that works. FBref team sheets for 1,900 Premier League
-matches gave the models something they never had: who is actually on the pitch.
-How much of today's eleven is the established eleven gains **0.0102 of 1X2
-log-loss on every held-out season**, about 36% of the remaining gap to the
-bookmaker's closing line — and against a benchmark priced after lineups are
-published, so it is not an information advantage. Own continuity comes out at
-+0.065 and the opponent's at -0.046, and teams missing three regulars score 5%
-below expectation against 6% above at full strength. Over/under gains nothing,
-which is what should happen: continuity moves goals between the sides, not the
-total. Recalibration accounts for none of it. `docs/06-squad-strength.md` has the
-evidence; reproduce with `footy squad-check`. Not yet in the serving path.
+Squad strength looked like the one that works, and then did not replicate. FBref
+team sheets gave the models something they never had: who is actually on the
+pitch. How much of today's eleven is the established eleven gains **0.0102 of
+1X2 log-loss in the Premier League**, on every held-out season, with a monotonic
+dose-response. Repeating it on Spain and Italy — 1,900 matches each, goals
+reconciling with the official score in 100% of them — returns **+0.0006 and
++0.0004, both indistinguishable from zero**. England differs from the other two
+by more than chance allows, and in Italy a team's own continuity has no effect at
+all.
 
-It cannot get there on free data. A predicted eleven built from recent minutes,
-suspensions and players missing from recent squads gets 8.2 of 11 starters right
-and still recovers only **10% of the gain**; the unguessable remainder carries
-82%. That is the point rather than a failure of the forecast — the model already
-knows what a team looks like at full strength, so the only news in a team sheet
-is the departure from it. Serving squad strength therefore needs a pre-match
-lineup feed, and that feed is worth at most 0.0102.
+The lesson is about the method. Three held-out seasons of one league felt
+conclusive and was not: the same twenty clubs recur and the fitted ratings carry
+the same biases year to year, so a correction exploiting those biases looks good
+in every season of that league and carries nothing to another. **Three seasons of
+one league is closer to one experiment than three.** Germany and France are
+still scraping. `docs/06-squad-strength.md` has the evidence; reproduce with
+`footy squad-check --competition ESP-LL`. Not in the serving path, and not a case
+for buying a lineup feed.
+
+Whether it could ever be served was measured separately and answered no. A
+predicted eleven built from recent minutes, suspensions and players missing from
+recent squads gets 8.2 of 11 starters right and still recovers only **10% of the
+English gain**; the unguessable remainder carries 82%. The model already knows
+what a team looks like at full strength, so the only news in a team sheet is the
+departure from it — and that part cannot be predicted from past team sheets.
 
 ## Sources
 

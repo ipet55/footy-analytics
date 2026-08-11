@@ -18,8 +18,8 @@ This is the master plan. Each phase ends with something measurable.
 | Per-team home advantage | Measured and rejected — the home/away split does not persist season to season (`docs/05-venue-effects.md`) |
 | Style of play (PPDA, deep completions) | 100% coverage in `core.match_team_stat`, absent from the feature layer, **never tested** |
 | Player layer | ENG-PL 2020-21 to 2024-25: 1,900 match sheets, 75,358 appearances, 1,609 players. All 3,800 team-matches reconcile with the official score |
-| Squad strength | **Works.** Lineup continuity gains 0.0102 of 1X2 log-loss on every held-out season, ~36% of the remaining gap to the closing line (`docs/06-squad-strength.md`). Not yet in the serving path |
-| Serving squad strength | **Blocked on a lineup feed.** A predicted eleven from free data recovers 10% of the gain; 82% sits in the unguessable part. This is the first thing in the project that money actually unlocks |
+| Squad strength | **Did not replicate.** Lineup continuity gains 0.0102 of 1X2 log-loss in ENG-PL and nothing in ESP-LL (+0.0006) or ITA-SA (+0.0004). Data is clean in all three, so this is the effect and not the ingest (`docs/06-squad-strength.md`). GER-BL and FRA-L1 pending |
+| Serving squad strength | Moot while the effect is one league wide. A predicted eleven from free data recovers 10% of the English gain, so serving it would need a paid lineup feed that the evidence does not currently justify |
 | Dixon-Coles 1X2 | Log-loss 0.98583 vs market 0.96031 — 76% of the base-rate-to-market gap closed |
 | Count models (corners/cards/fouls/shots) | In progress — totals-variance fix written, **not yet re-backtested** |
 | DB size | 402 MB of the 500 MB free tier |
@@ -107,18 +107,18 @@ of log-loss is worth less than being able to see what already works.
 - Still to do here: the GitHub Actions cron that keeps fixtures and predictions
   fresh, and the generated per-fixture summary.
 
-### Phase 3 — player layer (done for ENG-PL; free upper-bound test answered)
-The plan was to run the free upper-bound test before paying, so that the size of
-the prize would be known before spending anything. That test has now been run,
-on FBref rather than Understat, and it came back positive: knowing the true
-eleven is worth 0.0102 of 1X2 log-loss (`docs/06-squad-strength.md`).
+### Phase 3 — player layer (scraped for ENG-PL, ESP-LL, ITA-SA)
+The plan was to run the free upper-bound test before paying, so the size of the
+prize would be known before spending anything. Doing that saved the money.
 
-The follow-up question — whether a *predicted* eleven could substitute for a
-live feed — was also run, and came back negative: 10% of the gain. So the
-API-Football month is no longer speculative. It buys a measured 0.0092 that
-cannot be had for free, and the ceiling is known.
+The test came back positive on England — knowing the true eleven is worth 0.0102
+of 1X2 log-loss — and then flat on Spain and Italy, at +0.0006 and +0.0004
+(`docs/06-squad-strength.md`). A predicted eleven, which is what a free pipeline
+could actually serve, recovers 10% of even the English figure.
 
-Remaining before buying: replicate on the other four leagues, which is free.
+So the API-Football month stays unbought. It would buy a real effect in at most
+one league of three, and the roadmap's own rule — replicate before spending —
+is what caught it.
 
 - New tables: `core.player` (+ `player_alias`), `core.appearance`
   (match, player, minutes, position, goals, assists, cards),
