@@ -160,31 +160,32 @@ sits at -0.055. It describes the past and predicts nothing.
 `docs/05-venue-effects.md` has the evidence; `venue_penalty` on
 `dixon_coles.fit` is off by default.
 
-Squad strength looked like the one that works, and then did not replicate. FBref
-team sheets gave the models something they never had: who is actually on the
-pitch. How much of today's eleven is the established eleven gains **0.0102 of
-1X2 log-loss in the Premier League**, on every held-out season, with a monotonic
-dose-response. Repeating it on Spain and Italy — 1,900 matches each, goals
-reconciling with the official score in 100% of them — returns **+0.0006 and
-+0.0004, both indistinguishable from zero**. England differs from the other two
-by more than chance allows, and in Italy a team's own continuity has no effect at
-all.
+Squad strength looked like the one that works, and did not survive replication.
+FBref team sheets for all five leagues — 8,982 matches, 100% coverage, one
+failing to reconcile with the official score — gave the models something they
+never had: who is actually on the pitch. How much of today's eleven is the
+established eleven gains **0.0102 of 1X2 log-loss in the Premier League**, on
+every held-out season, with a monotonic dose-response. Across the other four
+leagues and 4,173 matches it gains **+0.0004, with a 95% interval of -0.0011 to
++0.0018**.
 
-The lesson is about the method. Three held-out seasons of one league felt
-conclusive and was not: the same twenty clubs recur and the fitted ratings carry
-the same biases year to year, so a correction exploiting those biases looks good
-in every season of that league and carries nothing to another. **Three seasons of
-one league is closer to one experiment than three.** Germany and France are
-still scraping. `docs/06-squad-strength.md` has the evidence; reproduce with
-`footy squad-check --competition ESP-LL`. Not in the serving path, and not a case
-for buying a lineup feed.
+The mistake is worth more than the finding. Matches within a season are not
+independent trials — the correction is fitted once per season and applied to all
+of them — so t = 3.90 on 1,136 matches was measuring far less than it looked.
+Cluster by season, the level the design actually varies at, and **England's own
+result is p = 0.100**: never significant. "Positive in all three seasons" is
+exactly what a p = 0.10 effect looks like three times running. Season-clustered
+replication across independent leagues is now the bar here.
+`docs/06-squad-strength.md` has the evidence; reproduce with `footy squad-check`.
 
-Whether it could ever be served was measured separately and answered no. A
-predicted eleven built from recent minutes, suspensions and players missing from
-recent squads gets 8.2 of 11 starters right and still recovers only **10% of the
-English gain**; the unguessable remainder carries 82%. The model already knows
-what a team looks like at full strength, so the only news in a team sheet is the
-departure from it — and that part cannot be predicted from past team sheets.
+Whether it could ever have been served was measured separately and also answered
+no. A predicted eleven built from recent minutes, suspensions and players missing
+from recent squads gets 8.2 of 11 starters right and still recovers only **10% of
+the English gain**; the unguessable remainder carries 82%. The model already
+knows what a team looks like at full strength, so the only news in a team sheet
+is the departure from it — and that part cannot be predicted from past team
+sheets. The player layer is kept regardless: the features were the wrong
+hypothesis, but the data is validated and cheap to query.
 
 ## Sources
 

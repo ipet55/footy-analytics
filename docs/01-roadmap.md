@@ -17,9 +17,9 @@ This is the master plan. Each phase ends with something measurable.
 | Blend harness | Built and tested, off by default; waiting on features worth blending |
 | Per-team home advantage | Measured and rejected — the home/away split does not persist season to season (`docs/05-venue-effects.md`) |
 | Style of play (PPDA, deep completions) | 100% coverage in `core.match_team_stat`, absent from the feature layer, **never tested** |
-| Player layer | ENG-PL 2020-21 to 2024-25: 1,900 match sheets, 75,358 appearances, 1,609 players. All 3,800 team-matches reconcile with the official score |
-| Squad strength | **Did not replicate.** Lineup continuity gains 0.0102 of 1X2 log-loss in ENG-PL and nothing in ESP-LL (+0.0006) or ITA-SA (+0.0004). Data is clean in all three, so this is the effect and not the ingest (`docs/06-squad-strength.md`). GER-BL and FRA-L1 pending |
-| Serving squad strength | Moot while the effect is one league wide. A predicted eleven from free data recovers 10% of the English gain, so serving it would need a paid lineup feed that the evidence does not currently justify |
+| Player layer | All five leagues 2020-21 to 2024-25: 8,982 match sheets at 100% coverage. One match in 8,982 fails to reconcile with the official score |
+| Squad strength | **Measured and rejected.** Lineup continuity gains 0.0102 of 1X2 log-loss in ENG-PL and +0.0004 across the other four leagues (4,173 matches). Clustered by season, even England is p = 0.100 — never significant (`docs/06-squad-strength.md`) |
+| Serving squad strength | Moot. A predicted eleven from free data recovers 10% of a gain that does not replicate, so no lineup feed is worth buying |
 | Dixon-Coles 1X2 | Log-loss 0.98583 vs market 0.96031 — 76% of the base-rate-to-market gap closed |
 | Count models (corners/cards/fouls/shots) | In progress — totals-variance fix written, **not yet re-backtested** |
 | DB size | 402 MB of the 500 MB free tier |
@@ -107,18 +107,20 @@ of log-loss is worth less than being able to see what already works.
 - Still to do here: the GitHub Actions cron that keeps fixtures and predictions
   fresh, and the generated per-fixture summary.
 
-### Phase 3 — player layer (scraped for ENG-PL, ESP-LL, ITA-SA)
+### Phase 3 — player layer (scraped for all five leagues; hypothesis rejected)
 The plan was to run the free upper-bound test before paying, so the size of the
 prize would be known before spending anything. Doing that saved the money.
 
-The test came back positive on England — knowing the true eleven is worth 0.0102
-of 1X2 log-loss — and then flat on Spain and Italy, at +0.0006 and +0.0004
+The test came back positive on England — knowing the true eleven appeared to be
+worth 0.0102 of 1X2 log-loss — and flat on all four other leagues, at +0.0004
+over 4,173 matches. Clustered by season, England itself is p = 0.100
 (`docs/06-squad-strength.md`). A predicted eleven, which is what a free pipeline
-could actually serve, recovers 10% of even the English figure.
+could actually serve, recovers 10% of even that.
 
-So the API-Football month stays unbought. It would buy a real effect in at most
-one league of three, and the roadmap's own rule — replicate before spending —
-is what caught it.
+So the API-Football month stays unbought, and the roadmap's own rule — replicate
+before spending — is what caught it. The scraped data stays: 8,982 validated
+match sheets are a fixed cost already paid, and a better hypothesis may yet use
+them.
 
 - New tables: `core.player` (+ `player_alias`), `core.appearance`
   (match, player, minutes, position, goals, assists, cards),
