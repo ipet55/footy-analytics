@@ -30,3 +30,6 @@ out/
 .idea/
 *.swp
 logs/
+
+# Lock files dropped by the browser soccerdata drives when scraping
+downloaded_files/
