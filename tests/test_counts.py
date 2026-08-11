@@ -95,6 +95,73 @@ def test_referee_effects_are_shrunk_toward_zero():
     )
 
 
+def promoted_and_relegated(mean_count: float, n_current: int = 20,
+                           n_departed: int = 13, per_season: int = 380):
+    """A decade of one league, including teams long since relegated.
+
+    The relegated teams are what makes this the shape that broke. Time decay
+    leaves them with almost no weight, so the data says nothing about their
+    parameters, but the sum-to-zero constraint still applies to them — and a
+    parameter free to drift while bound by a constraint drags the teams that are
+    identified along with it.
+    """
+    home, away, days = [], [], []
+    for season in range(8):
+        # Departed teams appear only in the earliest seasons.
+        squad = (
+            list(range(n_current + n_departed))
+            if season < 3
+            else list(range(n_current))
+        )
+        for _ in range(per_season):
+            h, a = RNG.choice(squad, 2, replace=False)
+            home.append(h)
+            away.append(a)
+            days.append((7 - season) * 365 + RNG.uniform(0, 365))
+
+    home = np.array(home)
+    away = np.array(away)
+    days_ago = np.array(days)
+    strength = RNG.normal(0, 0.2, n_current + n_departed)
+    hc = RNG.poisson(mean_count * np.exp(strength[home])).astype(float)
+    ac = RNG.poisson(mean_count * np.exp(strength[away])).astype(float)
+    return home, away, hc, ac, days_ago, n_current
+
+
+@pytest.mark.parametrize("stat,mean_count",
+                         [("cards", 1.7), ("corners", 5.4),
+                          ("fouls", 10.7), ("shots", 12.7)])
+def test_fitted_rates_stay_near_the_data_whatever_its_level(stat, mean_count):
+    """The regression test for the divergence that produced fouls rates in the
+    billions.
+
+    Attack is pinned to sum to zero, so it cannot carry any of the level. When
+    concede started at only half of that level the optimiser had to find the rest
+    somewhere, and with relegated teams free to drift it pushed attacks into
+    their bounds instead. Fitted fouls rates for real fixtures came out at 1e12
+    in four of the five leagues.
+
+    Nothing raised. Cards and corners were unaffected because their means are
+    small enough that half the level is close enough to start from, so the
+    failure was invisible in three of the four markets, which is why it needs a
+    test that sweeps the level rather than one fixture of synthetic data.
+    """
+    spec = cm.SPECS[stat]
+    home, away, hc, ac, days_ago, n_current = promoted_and_relegated(mean_count)
+
+    fitted = cm.fit(home, away, hc, ac, days_ago, spec)
+    # Only the teams still playing matter; the departed ones are unidentified by
+    # construction and no model can say anything about them.
+    rates = [r for h in range(n_current) for a in range(n_current) if h != a
+             for r in fitted.rates(h, a)]
+
+    observed = float(np.mean(np.concatenate([hc, ac])))
+    assert max(rates) < 5 * observed, f"rate {max(rates):.3g} against mean {observed:.1f}"
+    assert min(rates) > observed / 5
+    current = [fitted.attack[t] for t in range(n_current)]
+    assert all(abs(v) < 2.99 for v in current), "an attack hit its bound"
+
+
 def test_fitted_rates_recover_a_known_home_advantage():
     spec = cm.SPECS["corners"]
     home, away, hc, ac, days_ago, _ = synthetic(n_matches=600)

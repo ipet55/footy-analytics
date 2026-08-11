@@ -72,6 +72,24 @@ SPECS: dict[str, CountSpec] = {
 }
 
 
+def count_pmf(rate: float, dispersion: float | None) -> np.ndarray:
+    """Distribution of one count. Poisson if dispersion is None, else negative
+    binomial with that dispersion."""
+    k = np.arange(MAX_COUNT + 1)
+    if dispersion is None:
+        with np.errstate(divide="ignore"):
+            log_p = k * np.log(rate) - rate - gammaln(k + 1)
+    else:
+        r = dispersion
+        log_p = (
+            gammaln(k + r) - gammaln(r) - gammaln(k + 1)
+            + r * np.log(r / (r + rate)) + k * np.log(rate / (r + rate))
+        )
+    p = np.exp(log_p)
+    total = p.sum()
+    return p / total if total > 0 else p
+
+
 @dataclass
 class FittedCount:
     spec: CountSpec
@@ -96,20 +114,7 @@ class FittedCount:
         return float(home), float(away)
 
     def pmf(self, rate: float) -> np.ndarray:
-        k = np.arange(MAX_COUNT + 1)
-        if self.dispersion is None:
-            with np.errstate(divide="ignore"):
-                log_p = k * np.log(rate) - rate - gammaln(k + 1)
-            p = np.exp(log_p)
-        else:
-            r = self.dispersion
-            log_p = (
-                gammaln(k + r) - gammaln(r) - gammaln(k + 1)
-                + r * np.log(r / (r + rate)) + k * np.log(rate / (r + rate))
-            )
-            p = np.exp(log_p)
-        total = p.sum()
-        return p / total if total > 0 else p
+        return count_pmf(rate, self.dispersion)
 
     def team_pmfs(
         self, home_team: int, away_team: int, referee_id: int | None = None
@@ -479,9 +484,16 @@ def fit(
     )
     n, n_disp, n_ref = d.n_teams, d.n_dispersion, d.n_referees
 
+    # Attack is pinned to sum to zero, so it cannot carry any of the level and
+    # concede has to start at the whole of it rather than half. Starting concede
+    # at half left every rate short by a factor of the other half, and since the
+    # constraint forbids lifting all the attacks together the optimiser walked
+    # some of them into the bounds instead, which produced fouls rates in the
+    # billions for the leagues where the mean is largest.
+    level = np.log(max((home_counts.mean() + away_counts.mean()) / 2, 0.5))
     start = np.concatenate([
         np.zeros(n - 1),
-        np.full(n, np.log(max(home_counts.mean(), 0.5)) / 2),
+        np.full(n, level),
         [0.05],
         ([np.log(5.0)] if n_disp else []),
         np.zeros(n_ref),
