@@ -18,6 +18,10 @@ COMPETITION_COUNTRY = {
     "ITA-SA": "Italy",
     "GER-BL": "Germany",
     "FRA-L1": "France",
+    "NED-ED": "Netherlands",
+    "BEL-PL": "Belgium",
+    "POR-PL": "Portugal",
+    "TUR-SL": "Turkey",
 }
 
 # football-data.co.uk name -> canonical name. Names absent here are already canonical.

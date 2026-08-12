@@ -226,8 +226,19 @@ on conflict (match_id) do nothing
 
 
 def build(conn: psycopg.Connection, rebuild: bool = False) -> tuple[int, int]:
+    """Populate the feature layer, refreshing the odds views it reads first.
+
+    The refresh is not optional housekeeping. `market_p_*` comes from
+    `core.market_1x2_mv`, so a build that runs against a stale view writes null
+    market probabilities and the backtest then reports the market as `nan` — a
+    silence that reads like "no odds exist" rather than "the view is behind".
+    That is exactly what happened when the Eredivisie, Liga Portugal and Süper
+    Lig were loaded with full Pinnacle coverage.
+    """
     with conn.cursor() as cur:
         cur.execute("set local statement_timeout = '20min'")
+        cur.execute("refresh materialized view core.market_1x2_mv")
+        cur.execute("refresh materialized view core.market_ou25_mv")
         if rebuild:
             cur.execute("truncate features.team_match, features.match")
         cur.execute(TEAM_MATCH_SQL)

@@ -266,6 +266,77 @@ statistic. A promoted club was being priced at one foul a match instead of ten,
 and the over probability underflowed hard enough to violate its own check
 constraint. Both models now default to the mean of their fitted parameters.
 
+## Does it beat the bookmaker?
+
+No, and now that is measured in nine leagues rather than one. Walk-forward 1X2
+log-loss from 2022/23, against de-vigged closing odds:
+
+| League | Base rate | Dixon-Coles | Market | Gap closed |
+|---|---|---|---|---|
+| Netherlands | 1.07047 | 0.96025 | **0.93356** | 81% |
+| Portugal | 1.06761 | 0.92727 | **0.90085** | 84% |
+| Turkey | 1.06552 | 0.98280 | **0.94841** | 71% |
+| England | 1.06711 | 0.98565 | **0.96031** | 76% |
+| Spain | 1.06196 | 0.97988 | **0.95972** | 80% |
+| Italy | 1.08688 | 0.98773 | **0.96864** | 84% |
+| Germany | 1.07387 | 0.99480 | **0.96986** | 76% |
+| France | 1.07107 | 0.99963 | **0.97810** | 77% |
+| Belgium | 1.06355 | 0.97756 | **0.97079** | 93% |
+
+The market wins everywhere. What the model does reliably is close 71–93% of the
+distance between a naive base rate and what the bookmaker knows, and it does that
+consistently enough across nine independent leagues that the number is a property
+of the model rather than of any one competition. Portugal has the lowest absolute
+log-loss because the league is more predictable, not because the model is better
+there — which is why the gap-closed column is the one to read.
+
+This is the honest ceiling on the goals markets. The count markets have never
+been compared to a bookmaker at all, because football-data.co.uk publishes no
+odds for corners, fouls or shots, so "books price those lazily" remains the
+central untested assumption of the project rather than a finding.
+
+## Competitions
+
+Nine leagues are loaded. The Eredivisie, Liga Portugal and Süper Lig were added
+because football-data.co.uk publishes the same columns for them as for the
+original five — shots, corners, fouls, cards and Pinnacle closing odds — so every
+model applies unchanged. Detailed statistics begin in 2017/18 rather than 2014/15,
+so the count markets train on nine seasons there instead of twelve; results and
+odds go back the full twelve.
+
+They are not published yet, and the reason is a limitation this exposed rather
+than anything wrong with them. Walk-forward, from 2022/23:
+
+| Market | Netherlands | Portugal | Turkey |
+|---|---|---|---|
+| Shots, per team (4.5/12.5) | 14.2%, cal 4.6% | 17.9%, cal 9.3% | 6.8%, cal 8.2% |
+| Corners, home | 6.2%, cal 6.8% | 10.3%, cal 9.7% | 1.6%, cal 5.8% |
+| Fouls, match total | 4.0%, cal 7.5% | 6.1%, cal 3.6% | 1.6%, cal 5.6% |
+| Cards, match total | -0.1% | 0.2% | 0.4% |
+
+Portugal's 17.9% on per-team shots is the largest gain anywhere in the project.
+But `ml.market.status` carries one verdict per market for *all* competitions,
+while the evidence is per league and per line. Shipping per-team shots globally
+would publish Portugal at 9.3% and Turkey at 8.2% calibration error, both outside
+the standard that holds cards back. So the registry needs a competition dimension
+before any of this can go on the page, and until it does these leagues are loaded
+and validated but not predicted.
+
+Cards coming out at roughly zero in all three is a useful confirmation rather
+than a disappointment: none of these leagues has referees loaded yet, and the
+referee term is what carries cards where it carries them at all.
+
+The Belgian Pro League is loaded to 2022/23 and stops there. From 2023/24 its
+playoff format replays 72 pairings a season, and `core.match` is keyed on one
+meeting per pairing per season. That key also blocks cup and European ties, so it
+is one fix rather than three — and it is the prerequisite for the Champions and
+Europa Leagues, which additionally need a cross-league rating because attack and
+defence are centred within a competition and cannot be compared across two.
+
+Eliteserien publishes results and closing odds only, with no shots, corners,
+fouls or cards, so it would support the goals markets alone. The Czech and
+Bulgarian top flights are not on football-data.co.uk in any file.
+
 ## Sources
 
 | Data | Source | Cost | Coverage | Status |

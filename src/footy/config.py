@@ -28,12 +28,21 @@ def has_database_url() -> bool:
 
 
 # Competition code in core.competition -> football-data.co.uk division code.
+#
+# The four after France publish the same columns as the first five — shots,
+# corners, fouls, cards and Pinnacle closing odds — so every model and market
+# applies to them unchanged. Their files omit the referee column, which only E0
+# carries, and referees are backfilled from FBref anyway.
 FOOTBALL_DATA_DIVISIONS: dict[str, str] = {
     "ENG-PL": "E0",
     "ESP-LL": "SP1",
     "ITA-SA": "I1",
     "GER-BL": "D1",
     "FRA-L1": "F1",
+    "NED-ED": "N1",
+    "BEL-PL": "B1",
+    "POR-PL": "P1",
+    "TUR-SL": "T1",
 }
 
 # Seasons by starting year. 2014 is the earliest season Understat publishes xG for,
