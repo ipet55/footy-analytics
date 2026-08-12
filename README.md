@@ -126,12 +126,12 @@ Validated walk-forward on 2022/23–2025/26, all five leagues. Detail in
 | Market | Benchmark beaten by | Status |
 |---|---|---|
 | 1X2 (Dixon-Coles) | closes 76% of the base-rate-to-market gap | baseline |
+| Shots, per team | 5.2–13.7%, every league, line and side | shipping — the strongest market here |
 | Fouls, match total | 5.4–6.5% | shipping |
 | Corners, per team | 1.9–6.3% | shipping |
 | Shots, match total | 0.8–4.5% | shipping |
-| Shots, per team, after the fit bug was fixed | 1.4–11.7%, positive in all five leagues | held: France and Italy miscalibrated |
-| Cards, match total, after referees landed | 0.6–5.0% | still held — Italy would qualify alone, Germany and France do not |
-| Fouls, per team | -1.8–9.4% | not shipping — Germany negative, calibration poor |
+| Cards, match total, after referees landed | 0.6–5.0% | held — Italy would qualify alone, Germany and France do not |
+| Fouls, per team | 2.6–9.1%, now positive everywhere | held — the 12.5 line miscalibrates in three leagues |
 | Corners, match total | ~0% | not shipping — no signal exists |
 
 Two rules the numbers imposed: published probabilities are always recalibrated,
@@ -225,8 +225,26 @@ were unaffected, their means being small enough to start from, and the match
 totals were never affected at all because `fit_total` has an explicit intercept.
 Fixing it left every shipped number bit-identical and promoted per-team shots from
 a documented 0.3–7.6% to 1.4–11.7%, positive in all five leagues at every line —
-the strongest signal in the project outside fouls totals. It is held on
-calibration, not signal. `docs/09-count-fit-divergence.md` has the evidence.
+the strongest signal in the project outside fouls totals.
+
+It was then held on calibration rather than signal, and that turned out to be a
+second bug wearing the first one's clothes. Unknown teams defaulted to a
+parameter of zero, which is right for attack and wrong for `concede`, where it
+prices a team at one shot a match instead of twelve. A backtest meets unknown
+teams three times a league every season, on the clubs just promoted into it, and
+a worst-bucket statistic reports exactly that kind of rare pathology. Correcting
+the default — done to stop a crash on the 2026-27 promoted clubs, with no
+expectation it would touch a backtest — took France from 14.8% to 6.4% and Italy
+from 13.3% to 7.0%. Restoring the old default reproduces the published figures
+exactly, which is what makes it a cause rather than a coincidence.
+
+**Per-team shots therefore ships**: 5.2–13.7% over the rolling benchmark and
+worst buckets of 1.1–7.0% across all thirty combinations of five leagues, three
+lines and two sides. Per-team fouls is the counter-example that keeps the
+standard meaningful — its signal is now positive everywhere too, but the 12.5
+line still miscalibrates in three leagues, and status is per market rather than
+per line. `docs/09-count-fit-divergence.md` has the evidence; reproduce with
+`python scripts/market_trust.py`.
 
 The 2026-27 calendars are loaded — 1,752 fixtures across the five leagues, from
 La Liga's opening weekend on 15 August to the last day of May — and predictions

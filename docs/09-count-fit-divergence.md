@@ -129,20 +129,58 @@ Every gain in every league at every line is now positive, against a documented
 0.3-7.6% before. This is comfortably the strongest signal in the project outside
 fouls totals — England's 10.1% mean beats fouls totals' 5.4-6.5%.
 
-It still does not ship, and the reason is calibration rather than signal: France
-at 14.8% and Italy at 13.3% worst-bucket error are well outside the standard that
-held cards back at 9.4%. Per-team fouls does not ship either, on signal as well
-as calibration — Germany is still negative at the 8.5 line (-1.81%) and worst
-buckets reach 19.5%.
+It did not ship at the time, and the reason given was calibration rather than
+signal: France at 14.8% and Italy at 13.3% worst-bucket error, well outside the
+standard that held cards back at 9.4%.
 
-So the honest summary is that the fix promoted per-team shots from "no signal" to
-"real signal, percentages not yet publishable", which is the same place cards
-sits. That is a recalibration problem, and a well-defined next piece of work.
+## Postscript, 2026-08-12: the miscalibration was a second bug
+
+Both of those numbers were an artifact, and the table above is superseded.
+
+Unknown teams defaulted to a parameter of zero. That is correct for `attack`,
+which the sum-to-zero constraint centres, and wrong for `concede`, which carries
+the whole level of the count — zero means about one shot a match instead of
+twelve. A walk-forward backtest meets unknown teams three times a league every
+season, on the clubs just promoted into it, and a handful of absurd
+probabilities is precisely what a worst-bucket statistic is built to report.
+
+The default was corrected to the league average while fixing a crash on the
+2026-27 promoted clubs, without any expectation that it would touch a backtest.
+Re-measuring afterwards:
+
+| League | Worst bucket, zero defaults | Worst bucket, fixed | Min gain, fixed |
+|---|---|---|---|
+| FRA-L1 | 14.8% | **6.4%** | 6.8% |
+| ITA-SA | 13.3% | **7.0%** | 7.1% |
+| ENG-PL | 9.7% | **7.0%** | 10.9% |
+
+The left column is this document's own figures, reproduced by restoring the old
+defaults and changing nothing else. That is the check that makes this a cause
+rather than a coincidence.
+
+Across all thirty combinations of five leagues, three lines and two sides,
+per-team shots now gains 5.2% to 13.7% with worst buckets of 1.1% to 7.0%. Not
+one cell misses either criterion, so **per-team shots ships** (migration 0016).
+Every line qualifying is what makes that possible: status is per market, so
+shipping one publishes all of its lines.
+
+Per-team fouls is the counter-example that keeps the standard honest. Its signal
+is now positive in all five leagues at every line, 2.6% to 9.1%, so the Germany
+negative recorded above has also gone. But the 12.5 line still misses
+calibration in Germany, Spain and Italy. The 8.5 line would qualify alone, and
+cannot be shipped alone, so the market stays held.
+
+The lesson is about measurement rather than football: a worst-bucket statistic is
+a maximum, so it reports the worst thing that happened, and a rare pathological
+input can therefore veto a market whose ordinary behaviour is excellent. Cards
+were held at 9.4% by the same statistic, and cards are unaffected by this bug —
+their mean is small enough that a zero default is not far wrong.
 
 ## Reproducing
 
 ```bash
 pytest tests/test_counts.py -k level
-footy backtest-counts --stat fouls --competition ESP-LL
-footy backtest-counts --stat shots --competition ENG-PL
+pytest tests/test_counts.py -k promoted
+footy backtest-counts --stat shots --competition FRA-L1
+python scripts/market_trust.py
 ```

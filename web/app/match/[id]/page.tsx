@@ -7,6 +7,7 @@ import {
   COMPETITIONS,
   type Fixture,
   type HeadToHead,
+  type Market,
   type MarketPrice,
   type Prediction,
   type TeamForm,
@@ -14,9 +15,14 @@ import {
 
 export const revalidate = 300;
 
-// The order markets appear in. Result first, then the goals family, then the
-// count markets — which is roughly the order of how much a reader cares, and
-// also puts the two markets with a price to compare against at the top.
+// Preferred order: result first, then the goals family, then the count markets,
+// which is roughly the order of how much a reader cares and puts the markets
+// with a price to compare against near the top.
+//
+// This ranks markets, it does not choose them. Whether a market may be published
+// is decided in ml.market.status and enforced by the view, so filtering on a list
+// here would mean a market earning publication and silently not appearing.
+// Anything unranked sorts to the end rather than vanishing.
 const ORDER = [
   "goals_1x2",
   "goals_total",
@@ -26,20 +32,15 @@ const ORDER = [
   "corners_home",
   "corners_away",
   "shots_total",
+  "shots_home",
+  "shots_away",
   "fouls_total",
-] as const;
+];
 
-const TITLES: Record<string, string> = {
-  goals_1x2: "Match result",
-  goals_total: "Total goals",
-  goals_btts: "Both teams to score",
-  goals_home: "Home team goals",
-  goals_away: "Away team goals",
-  corners_home: "Home corners",
-  corners_away: "Away corners",
-  shots_total: "Total shots",
-  fouls_total: "Total fouls",
-};
+function rank(code: string) {
+  const i = ORDER.indexOf(code);
+  return i === -1 ? ORDER.length : i;
+}
 
 const NO_PRICE = "No bookmaker in this dataset prices this market.";
 
@@ -60,13 +61,15 @@ export default async function MatchPage({
   const matchId = Number(id);
   if (!Number.isFinite(matchId)) notFound();
 
-  const [fixtureRes, predictionRes, priceRes, formRes, h2hRes] = await Promise.all([
-    supabase.from("fixture").select("*").eq("match_id", matchId).maybeSingle(),
-    supabase.from("prediction").select("*").eq("match_id", matchId),
-    supabase.from("market_price").select("*").eq("match_id", matchId),
-    supabase.from("team_form").select("*").eq("match_id", matchId),
-    supabase.from("head_to_head").select("*").eq("match_id", matchId).maybeSingle(),
-  ]);
+  const [fixtureRes, predictionRes, priceRes, formRes, h2hRes, marketRes] =
+    await Promise.all([
+      supabase.from("fixture").select("*").eq("match_id", matchId).maybeSingle(),
+      supabase.from("prediction").select("*").eq("match_id", matchId),
+      supabase.from("market_price").select("*").eq("match_id", matchId),
+      supabase.from("team_form").select("*").eq("match_id", matchId),
+      supabase.from("head_to_head").select("*").eq("match_id", matchId).maybeSingle(),
+      supabase.from("market").select("market_code,label"),
+    ]);
 
   const fixture = fixtureRes.data as Fixture | null;
   if (!fixture) notFound();
@@ -80,6 +83,12 @@ export default async function MatchPage({
   const away = forms.find((f) => !f.is_home);
   const played =
     fixture.home_goals_ft !== null && fixture.away_goals_ft !== null;
+
+  const labels = new Map<string, string>(
+    ((marketRes.data ?? []) as Array<Pick<Market, "market_code" | "label">>).map(
+      (m) => [m.market_code, m.label]
+    )
+  );
 
   const byMarket = new Map<string, Prediction[]>();
   for (const p of predictions) {
@@ -124,13 +133,15 @@ export default async function MatchPage({
         </p>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
-          {ORDER.filter((code) => byMarket.has(code)).map((code) => {
+          {[...byMarket.keys()]
+            .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+            .map((code) => {
             const rows = [...(byMarket.get(code) ?? [])].sort(sortRows);
             const marketPrices = prices.filter((p) => p.market_code === code);
             return (
               <MarketCard
                 key={code}
-                title={TITLES[code] ?? code}
+                title={labels.get(code) ?? code}
                 subtitle={marketPrices.length === 0 ? NO_PRICE : undefined}
                 rows={rows}
                 prices={marketPrices}
