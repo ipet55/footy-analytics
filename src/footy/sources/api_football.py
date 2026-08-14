@@ -43,7 +43,19 @@ LEAGUE_IDS: dict[str, int] = {
     "NOR-EL": 103,
     "INT-UCL": 2,
     "INT-UEL": 3,
+    # Already held from football-data.co.uk, which publishes results and odds but
+    # no forward calendar. These are here for upcoming fixtures only: the history
+    # stays with the source that has the closing prices.
+    "NED-ED": 88,
+    "POR-PL": 94,
+    "TUR-SL": 203,
+    "BEL-PL": 144,
 }
+
+# Provider status codes for a match that has finished, whatever the route to it.
+FINISHED = frozenset({"FT", "AET", "PEN"})
+# Codes meaning "has not been played and is still expected to be".
+SCHEDULED = frozenset({"TBD", "NS"})
 
 # Competitions whose season label is the calendar year it was played in. Every
 # other one here is labelled by the year it started, which is also what

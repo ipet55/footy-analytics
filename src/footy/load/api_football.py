@@ -22,7 +22,14 @@ from typing import Iterable, Self
 import psycopg
 
 from footy import db
-from footy.sources.api_football import SOURCE_CODE, Fixture, TeamStat, matchday_of
+from footy.sources.api_football import (
+    FINISHED,
+    SCHEDULED,
+    SOURCE_CODE,
+    Fixture,
+    TeamStat,
+    matchday_of,
+)
 
 # Written to core.match_team_stat. Kept explicit rather than derived from the
 # source's mapping so that adding a statistic there cannot silently change the
@@ -147,14 +154,21 @@ def store_fixtures(
     competition_code: str,
     start_year: int,
     fixtures: list[Fixture],
+    include_scheduled: bool = False,
 ) -> tuple[int, dict[int, int]]:
-    """Write played matches and return a map of API fixture id -> our match id.
+    """Write matches and return a map of API fixture id -> our match id.
 
-    Only finished matches are written. A fixture still to be played has no score
-    to store and would have to be revisited anyway, and the scheduled-fixture
-    path already exists for the leagues that need it.
+    Finished matches always. Scheduled ones only when asked, because for the nine
+    leagues that already have results from football-data.co.uk the useful part of
+    this source is the forward calendar and nothing else — pulling their history
+    through here as well would put two sources in a race to own the same rows,
+    and the other one has the closing odds.
+
+    A scheduled row carries no score and status 'scheduled', which is what makes
+    it eligible for prediction rather than settlement.
     """
-    played = [f for f in fixtures if f.status in ("FT", "AET", "PEN")]
+    wanted = set(FINISHED) | (set(SCHEDULED) if include_scheduled else set())
+    played = [f for f in fixtures if f.status in wanted]
     if not played:
         return 0, {}
 
@@ -229,19 +243,32 @@ def store_fixtures(
                 home_team_id, away_team_id, home_goals_ft, away_goals_ft,
                 home_goals_ht, away_goals_ht, referee_id, venue_name, stage, matchday
             )
-            select competition_id, season_id, kickoff_date, kickoff_utc, 'finished',
+            select competition_id, season_id, kickoff_date, kickoff_utc,
+                   case when home_goals is null then 'scheduled' else 'finished' end,
                    home_team_id, away_team_id, home_goals, away_goals,
                    home_goals_ht, away_goals_ht, referee_id, venue, stage, matchday
               from _af_resolved
             on conflict (season_id, home_team_id, away_team_id, stage) do update
-                set home_goals_ft = excluded.home_goals_ft,
-                    away_goals_ft = excluded.away_goals_ft,
-                    home_goals_ht = excluded.home_goals_ht,
-                    away_goals_ht = excluded.away_goals_ht,
+                -- coalesce on the scores so a later pass that sees a fixture as
+                -- unplayed cannot erase a result another source already stored.
+                set home_goals_ft = coalesce(excluded.home_goals_ft,
+                                             core.match.home_goals_ft),
+                    away_goals_ft = coalesce(excluded.away_goals_ft,
+                                             core.match.away_goals_ft),
+                    home_goals_ht = coalesce(excluded.home_goals_ht,
+                                             core.match.home_goals_ht),
+                    away_goals_ht = coalesce(excluded.away_goals_ht,
+                                             core.match.away_goals_ht),
+                    kickoff_date  = excluded.kickoff_date,
                     kickoff_utc   = coalesce(excluded.kickoff_utc, core.match.kickoff_utc),
                     referee_id    = coalesce(excluded.referee_id, core.match.referee_id),
                     venue_name    = coalesce(excluded.venue_name, core.match.venue_name),
-                    status        = 'finished',
+                    matchday      = coalesce(excluded.matchday, core.match.matchday),
+                    status        = case
+                                      when coalesce(excluded.home_goals_ft,
+                                                    core.match.home_goals_ft) is null
+                                      then 'scheduled' else 'finished'
+                                   end,
                     updated_at    = now()
             """
         )

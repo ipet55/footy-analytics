@@ -453,6 +453,56 @@ def load_api_football(
     )
 
 
+@app.command("load-calendar")
+def load_calendar(
+    competitions: str = typer.Option(
+        "NED-ED,POR-PL,TUR-SL,BEL-PL", help="Comma-separated competition codes."
+    ),
+    season: int = typer.Option(2026, help="Season starting year to load."),
+):
+    """Load a season's upcoming fixtures from API-Football.
+
+    For the leagues whose results and odds come from football-data.co.uk, which
+    publishes a rolling one-week window and so cannot supply a season calendar.
+    Only the calendar is taken: statistics are not fetched, and a score already
+    stored by another source is never overwritten.
+    """
+    from footy.load import api_football as af_load
+    from footy.sources import api_football as af
+
+    codes = [c.strip() for c in competitions.split(",") if c.strip()]
+    unknown = [c for c in codes if c not in af.LEAGUE_IDS]
+    if unknown:
+        console.print(f"[red]no API-Football league id for: {', '.join(unknown)}[/red]")
+        raise typer.Exit(1)
+
+    client = af.Client()
+    with db.connect() as conn:
+        countries = dict(
+            db.fetch_all(conn, "select code, country from core.competition")
+        )
+
+    for code in codes:
+        try:
+            fixtures = af.fixtures(client, code, season)
+        except Exception as exc:
+            console.print(f"{code}: [red]{str(exc)[:140]}[/red]")
+            continue
+        upcoming = sum(1 for f in fixtures if f.status in af.SCHEDULED)
+        with db.connect() as conn:
+            created, _ = af_load.seed_teams(conn, fixtures, countries.get(code))
+            conn.commit()
+            written, mapping = af_load.store_fixtures(
+                conn, code, season, fixtures, include_scheduled=True
+            )
+            conn.commit()
+        console.print(
+            f"{code}: {len(fixtures)} fixtures published, {upcoming} still to play, "
+            f"{written} rows written"
+            f"{f', {created} new teams' if created else ''}"
+        )
+
+
 @app.command("load-referees")
 def load_referees(
     competitions: str = typer.Option(
