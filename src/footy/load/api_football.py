@@ -337,6 +337,237 @@ def store_fixtures(
     return written, mapping
 
 
+def alias_teams(
+    conn: psycopg.Connection,
+    competition_code: str,
+    start_year: int,
+    fixtures: list[Fixture],
+    threshold: float = 0.72,
+) -> tuple[list[tuple[str, str, float]], list[str]]:
+    """Match this source's club names to clubs already in the competition.
+
+    Fuzzy, and deliberately so. The provider says Bournemouth where we say AFC
+    Bournemouth, Alaves where we say Deportivo Alavés, Le Havre where we say Le
+    Havre AC. Exact normalised matching linked 56 of 380 Spanish fixtures and
+    invented six clubs to hold the rest.
+
+    Fuzziness is safe here only because of the constraint: candidates are the clubs
+    that already played in this competition and season, about twenty of them, not
+    every club in the database. Matching 'Bournemouth' against twenty English
+    clubs is a different problem from matching it against four thousand.
+
+    Returns (matched, unresolved) for reporting. Nothing is created — a club this
+    cannot place is left for a human, because inventing one is what produced two
+    merge migrations already.
+    """
+    names: dict[int, str] = {}
+    for fixture in fixtures:
+        names.setdefault(fixture.home_id, fixture.home_name)
+        names.setdefault(fixture.away_id, fixture.away_name)
+    if not names:
+        return [], []
+
+    existing = db.fetch_all(
+        conn,
+        """
+        select distinct t.team_id, t.canonical_name
+          from core.match m
+          join core.competition c on c.competition_id = m.competition_id
+          join core.season se on se.season_id = m.season_id
+          join core.team t on t.team_id in (m.home_team_id, m.away_team_id)
+         where c.code = %s and se.start_year = %s
+        """,
+        (competition_code, start_year),
+    )
+    already = {
+        r[0] for r in db.fetch_all(
+            conn,
+            """
+            select ta.source_team_id from core.team_alias ta
+              join core.source s on s.source_id = ta.source_id
+                                and s.code = %s
+             where ta.source_team_id is not null
+            """,
+            (SOURCE_CODE,),
+        )
+    }
+
+    matched: list[tuple[str, str, float]] = []
+    unresolved: list[str] = []
+    rows: list[list] = []
+    for source_id, source_name in sorted(names.items()):
+        if str(source_id) in already:
+            continue
+        best, score = None, 0.0
+        for team_id, canonical in existing:
+            ratio = _similarity(source_name, canonical)
+            if ratio > score:
+                best, score = (team_id, canonical), ratio
+        if best and score >= threshold:
+            matched.append((source_name, best[1], score))
+            rows.append([best[0], str(source_id), source_name])
+        else:
+            unresolved.append(
+                f"{source_name}"
+                + (f" (closest {best[1]}, {score:.2f})" if best else "")
+            )
+
+    if rows:
+        with conn.cursor() as cur:
+            db.copy_into_temp(
+                conn,
+                "_af_alias",
+                ["team_id", "source_team_id", "alias_name"],
+                rows,
+                "create temporary table _af_alias "
+                "(team_id integer, source_team_id text, alias_name text)",
+            )
+            cur.execute(
+                """
+                insert into core.team_alias (team_id, source_id, source_team_id, alias_name)
+                select a.team_id, src.source_id, a.source_team_id, a.alias_name
+                  from _af_alias a
+                  join core.source src on src.code = %s
+                 where not exists (
+                        select 1 from core.team_alias x
+                         where x.source_id = src.source_id
+                           and x.source_team_id = a.source_team_id)
+                """,
+                (SOURCE_CODE,),
+            )
+            cur.execute("drop table _af_alias")
+    return matched, unresolved
+
+
+def _similarity(a: str, b: str) -> float:
+    """How alike two club names are, ignoring the decoration.
+
+    Both the character ratio and the token overlap, taking whichever is higher.
+    Character ratio alone rates 'Bournemouth' against 'AFC Bournemouth' at 0.85 but
+    'Inter' against 'Internazionale' at 0.53; token overlap catches the second.
+    Corporate noise — FC, AFC, CF, SC, the numbers German clubs carry — is dropped
+    first, because it is the part that differs between sources and carries no
+    information about which club is meant.
+    """
+    import difflib
+    import re
+    import unicodedata
+
+    noise = {"fc", "afc", "cf", "sc", "ac", "as", "cd", "rc", "rcd", "ss", "us",
+             "sv", "vfl", "vfb", "tsg", "bsc", "1", "04", "05", "07", "96", "1899",
+             "de", "the", "club", "calcio", "united", "city"}
+
+    def tokens(name: str) -> tuple[str, set[str]]:
+        flat = "".join(
+            ch for ch in unicodedata.normalize("NFKD", name.lower())
+            if not unicodedata.combining(ch)
+        )
+        parts = [p for p in re.split(r"[^a-z0-9]+", flat) if p]
+        return "".join(parts), {p for p in parts if p not in noise}
+
+    a_flat, a_tokens = tokens(a)
+    b_flat, b_tokens = tokens(b)
+    ratio = difflib.SequenceMatcher(None, a_flat, b_flat).ratio()
+    if a_tokens and b_tokens:
+        overlap = len(a_tokens & b_tokens) / min(len(a_tokens), len(b_tokens))
+        ratio = max(ratio, overlap)
+    return ratio
+
+
+def link_fixtures(
+    conn: psycopg.Connection,
+    competition_code: str,
+    start_year: int,
+    fixtures: list[Fixture],
+) -> tuple[int, int]:
+    """Attach this source's fixture ids to matches another source already owns.
+
+    The nine leagues with closing odds get their results from football-data.co.uk,
+    so their matches exist with no API-Football id and therefore cannot have events
+    or team sheets fetched for them — the leagues a reader cares most about had the
+    least of this data. This links the two without touching a score.
+
+    Matched on season, both teams and a kickoff date within a day. The day of
+    latitude is for timezone disagreement between sources on late kickoffs, and it
+    is safe because two league matches between the same pair on consecutive days
+    does not happen. `stage` is deliberately not part of the match: the sources
+    label rounds differently and the pairing plus the date is already unique.
+
+    Returns (linked, unmatched), where unmatched excludes fixtures that were already
+    linked by an earlier run. Counting those as failures made a second run of a
+    fully linked league report '0 linked, 307 unmatched', which reads like a total
+    failure of the thing that had just worked.
+
+    Unmatched is worth reporting rather than swallowing: a league where rows fail to
+    match means the team aliases are wrong, not that the fixtures are missing. That
+    is how the split club identities in 0044 and 0045 were found.
+    """
+    rows = [
+        [f.fixture_id, f.kickoff_date, str(f.home_id), str(f.away_id)]
+        for f in fixtures
+        if f.status in FINISHED
+    ]
+    if not rows:
+        return 0, 0
+
+    with conn.cursor() as cur:
+        db.copy_into_temp(
+            conn,
+            "_af_link",
+            ["fixture_id", "kickoff_date", "home_source_id", "away_source_id"],
+            rows,
+            """
+            create temporary table _af_link (
+                fixture_id bigint, kickoff_date date,
+                home_source_id text, away_source_id text
+            )
+            """,
+        )
+        cur.execute(
+            """
+            insert into core.match_source (match_id, source_id, source_match_id)
+            select distinct on (l.fixture_id) m.match_id, src.source_id,
+                   l.fixture_id::text
+              from _af_link l
+              join core.source src on src.code = %s
+              join core.team_alias th on th.source_id = src.source_id
+                                     and th.source_team_id = l.home_source_id
+              join core.team_alias ta on ta.source_id = src.source_id
+                                     and ta.source_team_id = l.away_source_id
+              join core.competition c on c.code = %s
+              join core.season se on se.start_year = %s
+              join core.match m on m.competition_id = c.competition_id
+                               and m.season_id = se.season_id
+                               and m.home_team_id = th.team_id
+                               and m.away_team_id = ta.team_id
+                               and m.kickoff_date between l.kickoff_date - 1
+                                                      and l.kickoff_date + 1
+             where not exists (
+                    select 1 from core.match_source ms
+                     where ms.match_id = m.match_id
+                       and ms.source_id = src.source_id)
+             order by l.fixture_id, abs(m.kickoff_date - l.kickoff_date)
+            on conflict do nothing
+            """,
+            (SOURCE_CODE, competition_code, start_year),
+        )
+        linked = cur.rowcount
+        cur.execute(
+            """
+            select count(*) from _af_link l
+             where not exists (
+                    select 1 from core.match_source ms
+                      join core.source s on s.source_id = ms.source_id
+                                        and s.code = %s
+                     where ms.source_match_id = l.fixture_id::text)
+            """,
+            (SOURCE_CODE,),
+        )
+        unmatched = cur.fetchone()[0]
+        cur.execute("drop table _af_link")
+    return linked, unmatched
+
+
 def store_events(
     conn: psycopg.Connection, match_ids: dict[int, int], events: Iterable
 ) -> int:

@@ -50,6 +50,16 @@ LEAGUE_IDS: dict[str, int] = {
     "POR-PL": 94,
     "TUR-SL": 203,
     "BEL-PL": 144,
+    # The five leagues with closing odds. Same restriction, and one addition: they
+    # are also linked to their provider fixture ids so that event minutes and team
+    # sheets can be fetched for them. Without a link the leagues a reader cares
+    # most about were the only ones with no timeline and no lineups, which is an
+    # odd way to build a football site.
+    "ENG-PL": 39,
+    "ESP-LL": 140,
+    "ITA-SA": 135,
+    "GER-BL": 78,
+    "FRA-L1": 61,
 }
 
 # Provider status codes for a match that has finished, whatever the route to it.

@@ -469,6 +469,43 @@ def freshness(max_result_age: int = 4, min_upcoming: int = 5) -> list[Check]:
             "the event loader is behind; match pages will render without a timeline",
         ))
 
+        # The check that found two migrations' worth of split club identities, and
+        # would have found them without anyone thinking to look. A fixture fails to
+        # link when the alias points at a club that has no matches in the league —
+        # which is what a duplicate identity is. Similarity scoring missed both
+        # 'Lyon' against 'Olympique Lyonnais' and 'Stade Brestois 29' against
+        # 'Brest', because as text they have almost nothing in common. Coverage does
+        # not care why two records disagree, only that one found no partner.
+        gaps = db.fetch_all(
+            conn,
+            """
+            select c.code, count(*) as played,
+                   count(*) filter (where exists (
+                       select 1 from core.match_source ms
+                         join core.source s on s.source_id = ms.source_id
+                                           and s.code = 'api_football'
+                        where ms.match_id = m.match_id)) as mapped
+              from core.match m
+              join core.competition c using (competition_id)
+              join core.season se on se.season_id = m.season_id
+             where m.home_goals_ft is not null
+               and se.start_year = (select max(start_year) - 1 from core.season)
+             group by 1 having count(*) > 50
+             order by 1
+            """,
+        )
+        poor = [
+            f"{code} {mapped}/{played}"
+            for code, played, mapped in gaps
+            if mapped < played * 0.95
+        ]
+        checks.append(Check(
+            "fixtures linked to the provider",
+            f"{len(gaps) - len(poor)} of {len(gaps)} leagues above 95%",
+            not poor,
+            f"a league below 95% usually means a duplicate club: {', '.join(poor)}",
+        ))
+
         banded = db.fetch_one(
             conn, "select count(*) from public.team_season_timing"
         )[0]

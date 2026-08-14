@@ -122,6 +122,14 @@ CANONICAL_NAME: dict[str, str] = {
     # failed — a leakage test noticed a club playing twice in one day.
     "Beveren": "Waasland-Beveren",
     "Lommel SK": "Lommel United",
+    # Found the cheap way, by checking what a link step created before running
+    # anything else: five new clubs, of which three were real and these two were
+    # spellings of clubs already present. Recorded here so the next load resolves
+    # them instead of recreating the pair, because a merge that leaves the cause
+    # in place is a chore that comes back every season.
+    "FC Volendam": "Volendam",
+    "Fatih Karagümrük": "Karagumruk",
+    "Fatih Karagumruk": "Karagumruk",
 }
 
 # Short display name for compact UI, where the canonical name is unwieldy.

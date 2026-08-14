@@ -507,6 +507,56 @@ def freshness(
     console.print(f"\n[green]all {len(checks)} checks pass[/green]")
 
 
+@app.command("link-fixtures")
+def link_fixtures(
+    competitions: str = typer.Option(
+        "ENG-PL,ESP-LL,ITA-SA,GER-BL,FRA-L1,NED-ED,POR-PL,TUR-SL,BEL-PL",
+        help="Comma-separated competition codes.",
+    ),
+    season: int = typer.Option(2026, help="Season starting year."),
+):
+    """Attach API-Football fixture ids to matches another source already owns.
+
+    The leagues with closing odds get their results from football-data.co.uk and so
+    have no provider id — which meant no team sheets and no event minutes for the
+    leagues a reader cares most about. Links the two without touching a score.
+    """
+    from footy.load import api_football as af_load
+    from footy.sources import api_football as af
+
+    codes = [c.strip() for c in competitions.split(",") if c.strip()]
+    client = af.Client()
+
+    for code in codes:
+        if code not in af.LEAGUE_IDS:
+            console.print(f"{code}: [yellow]no API-Football league id[/yellow]")
+            continue
+        try:
+            fixtures = af.fixtures(client, code, season)
+        except Exception as exc:
+            console.print(f"{code}: [red]{str(exc)[:120]}[/red]")
+            continue
+        with db.connect() as conn:
+            # Aliases first, and no club is ever created here. A link step that
+            # invents a club produces a second identity for a team that already has
+            # a decade of history, which is how this project earned three merge
+            # migrations.
+            matched, unresolved = af_load.alias_teams(conn, code, season, fixtures)
+            conn.commit()
+            linked, unmatched = af_load.link_fixtures(conn, code, season, fixtures)
+            conn.commit()
+        colour = "yellow" if unmatched > linked * 0.1 else "green"
+        console.print(
+            f"{code} {season}: [{colour}]{linked} linked[/{colour}], {unmatched} unmatched"
+            + (f", {len(matched)} clubs aliased" if matched else "")
+        )
+        for name, canonical, score in matched:
+            tone = "dim" if score >= 0.9 else "yellow"
+            console.print(f"    [{tone}]{name} -> {canonical} ({score:.2f})[/{tone}]")
+        for name in unresolved:
+            console.print(f"    [red]unresolved: {name}[/red]")
+
+
 @app.command("load-events")
 def load_events(
     competitions: str = typer.Option(
