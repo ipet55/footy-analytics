@@ -361,6 +361,98 @@ def load_lineups(
         )
 
 
+@app.command("load-api-football")
+def load_api_football(
+    competitions: str = typer.Option(
+        "BUL-1L,CZE-1L,NOR-EL,INT-UCL,INT-UEL",
+        help="Comma-separated competition codes.",
+    ),
+    from_year: int = typer.Option(2015, help="Earliest season to attempt."),
+    to_year: int = typer.Option(2026, help="Latest season to attempt."),
+    skip_stats: bool = typer.Option(
+        False, "--skip-stats", help="Load fixtures only, which is one request a season."
+    ),
+):
+    """Load fixtures and per-match team statistics from API-Football.
+
+    The only source here that carries corners for these competitions, and the
+    only one that carries them at all outside football-data.co.uk's nine leagues.
+
+    Statistics cost one request per fixture and everything else costs one per
+    season, so the fixture count is the whole budget. A season is committed
+    before the next begins, making this safe to interrupt and re-run.
+    """
+    from footy.load import api_football as af_load
+    from footy.sources import api_football as af
+
+    codes = [c.strip() for c in competitions.split(",") if c.strip()]
+    unknown = [c for c in codes if c not in af.LEAGUE_IDS]
+    if unknown:
+        console.print(f"[red]no API-Football league id for: {', '.join(unknown)}[/red]")
+        raise typer.Exit(1)
+
+    client = af.Client()
+    total = af_load.LoadResult()
+
+    with db.connect() as conn:
+        countries = dict(
+            db.fetch_all(conn, "select code, country from core.competition")
+        )
+        years = dict(
+            db.fetch_all(
+                conn,
+                """
+                select c.code, array_agg(s.start_year order by s.start_year)
+                  from core.competition c join core.season s using (competition_id)
+                 group by c.code
+                """,
+            )
+        )
+
+    for code in codes:
+        seasons = [y for y in years.get(code, []) if from_year <= y <= to_year]
+        console.print(f"\n[bold]{code}[/bold] — {len(seasons)} seasons")
+        for year in seasons:
+            try:
+                fixtures = af.fixtures(client, code, year)
+            except Exception as exc:
+                console.print(f"  {year}: [red]fixtures failed: {str(exc)[:120]}[/red]")
+                continue
+            if not fixtures:
+                console.print(f"  {year}: no fixtures published")
+                continue
+
+            with db.connect() as conn:
+                created, linked = af_load.seed_teams(conn, fixtures, countries.get(code))
+                conn.commit()
+                written, mapping = af_load.store_fixtures(conn, code, year, fixtures)
+                conn.commit()
+
+            stats_written = 0
+            if not skip_stats and mapping:
+                # Committed in batches so an interruption costs a batch, not a
+                # season's worth of requests already paid for.
+                ids = list(mapping)
+                for start in range(0, len(ids), 100):
+                    batch = ids[start : start + 100]
+                    rows = list(af.statistics(client, batch))
+                    with db.connect() as conn:
+                        stats_written += af_load.store_stats(conn, mapping, rows)
+                        conn.commit()
+
+            total += af_load.LoadResult(created, linked, written, stats_written)
+            console.print(
+                f"  {year}: {written} matches, {stats_written} stat rows"
+                f"{f', {created} new teams' if created else ''}"
+                f"  [dim](day remaining {client.day_remaining})[/dim]"
+            )
+
+    console.print(
+        f"\n[green]{total.matches:,} matches, {total.stats:,} stat rows, "
+        f"{total.teams} new teams[/green]"
+    )
+
+
 @app.command("load-referees")
 def load_referees(
     competitions: str = typer.Option(
