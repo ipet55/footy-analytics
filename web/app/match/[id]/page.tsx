@@ -29,12 +29,18 @@ const ORDER = [
   "goals_btts",
   "goals_home",
   "goals_away",
+  "corners_total",
   "corners_home",
   "corners_away",
   "shots_total",
   "shots_home",
   "shots_away",
   "fouls_total",
+  "fouls_home",
+  "fouls_away",
+  "cards_total",
+  "cards_home",
+  "cards_away",
 ];
 
 function rank(code: string) {

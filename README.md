@@ -270,11 +270,36 @@ constraint. Both models now default to the mean of their fitted parameters.
 
 Nine of the fourteen competitions publish something, and they do not publish the
 same things. Publication is decided per competition in `ml.market_competition`
-and enforced by the views, so England shows eleven markets and Portugal shows six
-— Portugal withholds per-team corners and shots despite having the largest gains
-anywhere, because its reliability buckets are 9.7% and 9.3%. Absence means no: a
-competition with no row publishes nothing rather than inheriting a verdict earned
-on other data, which is asserted in `tests/test_public_surface.py`.
+and enforced by the views. Absence means no: a competition with no row publishes
+nothing rather than inheriting a verdict earned on other data, which is asserted
+in `tests/test_public_surface.py`.
+
+| Competition | Markets |
+|---|---|
+| England, Spain, Italy, Germany, France | 11 |
+| Portugal, Turkey | 11 |
+| Belgium | 10 |
+| Netherlands | 8 |
+
+Which eleven differs. Portugal publishes away corners and withholds home corners;
+Turkey publishes both; the Netherlands withholds all of them. That is not
+arbitrariness, it is the calibration measured in each place.
+
+Two rules do the deciding, and both must hold at *every* line, because status has
+no line dimension and a market is published whole or not at all: beat the rolling
+benchmark by at least a point, and keep the worst reliability bucket inside 8%.
+
+The gain floor was added after the full assessment, because "positive at every
+line" turned out to admit markets gaining 0.2%. Corner totals clear that bar in
+three of the four new leagues while the original five found no signal there at all
+— and the mechanism behind that finding, that dominance moves corners between the
+sides rather than creating them, does not stop being true in the Eredivisie. One
+percent is set by precedent rather than taste: shots totals ship globally on a
+minimum of 0.8%.
+
+Measuring one line and generalising cost three wrong calls, all corrected: Dutch
+fouls totals and home corners, and Turkish fouls totals, were published on a single
+line's evidence and fail once every line is checked.
 
 Bulgaria, the Czech league, Eliteserien and the two UEFA competitions are loaded
 and measured but publish nothing yet.
