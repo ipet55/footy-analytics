@@ -211,6 +211,54 @@ def refresh_api_leagues(report: Report) -> None:
     report.add("api results", f"{matches} matches, {stats} stat rows")
 
 
+def refresh_events(report: Report, limit: int = 400) -> None:
+    """Minutes and team sheets for matches that do not have them yet.
+
+    Two requests per match and no bulk endpoint, which is why it is capped. A day's
+    fixtures across every competition is well inside the cap; the cap exists so
+    that a first run, or a run after an outage, spends a bounded slice of the daily
+    quota instead of the whole of it and starving the loaders that come after.
+
+    Ordered newest first, because a stale recent match is what a reader notices.
+    """
+    client = af.Client()
+    with db.connect() as conn:
+        rows = db.fetch_all(
+            conn,
+            """
+            select ms.source_match_id::bigint, ms.match_id
+              from core.match_source ms
+              join core.source s on s.source_id = ms.source_id
+                                and s.code = 'api_football'
+              join core.match m on m.match_id = ms.match_id
+             where m.home_goals_ft is not null
+               and m.kickoff_date > current_date - interval '400 days'
+               and not exists (select 1 from core.match_event e
+                                where e.match_id = m.match_id)
+             order by m.kickoff_date desc
+             limit %s
+            """,
+            (limit,),
+        )
+    mapping = dict(rows)
+    if not mapping:
+        report.add("events", "nothing new to fetch")
+        return
+
+    ids = list(mapping)
+    try:
+        events = list(af.events(client, ids))
+        lineups = list(af.lineups(client, ids))
+    except Exception as exc:
+        report.add("events", str(exc)[:80], ok=False)
+        return
+    with db.connect() as conn:
+        n_ev = af_load.store_events(conn, mapping, events)
+        n_lu = af_load.store_lineups(conn, mapping, lineups)
+        conn.commit()
+    report.add("events", f"{len(mapping)} matches, {n_ev:,} events, {n_lu} lineups")
+
+
 def rebuild_features(report: Report) -> None:
     """Feature layer and every materialized view.
 
@@ -268,6 +316,7 @@ def refresh(days: int = 21, season: int | None = None) -> Report:
     refresh_results(report, season)
     refresh_calendars(report)
     refresh_api_leagues(report)
+    refresh_events(report)
     rebuild_features(report)
     repredict(report, days)
     return report
@@ -391,6 +440,41 @@ def freshness(max_result_age: int = 4, min_upcoming: int = 5) -> list[Check]:
         checks.append(Check(
             "team views current", "yes" if drift == 0 else f"{drift} teams missing",
             drift == 0, "public.team has not been refreshed since a load",
+        ))
+
+        # Events are the one feed with no bulk endpoint, so they are the one most
+        # likely to fall quietly behind: the pages still render, just without a
+        # timeline, and nothing complains. Compare against matches recent enough
+        # to be worth fetching rather than against all of history, which will
+        # never be complete and should not read as a failure.
+        with_events, recent = db.fetch_one(
+            conn,
+            """
+            select count(*) filter (
+                     where exists (select 1 from core.match_event e
+                                    where e.match_id = m.match_id)),
+                   count(*)
+              from core.match m
+              join core.match_source ms on ms.match_id = m.match_id
+              join core.source s on s.source_id = ms.source_id
+                                and s.code = 'api_football'
+             where m.home_goals_ft is not null
+               and m.kickoff_date between current_date - 30 and current_date
+            """,
+        )
+        checks.append(Check(
+            "recent matches with a timeline",
+            f"{with_events} of {recent}" if recent else "no recent matches",
+            recent == 0 or with_events >= recent * 0.9,
+            "the event loader is behind; match pages will render without a timeline",
+        ))
+
+        banded = db.fetch_one(
+            conn, "select count(*) from public.team_season_timing"
+        )[0]
+        checks.append(Check(
+            "goal timing view", f"{banded:,} rows", banded > 0,
+            "team_season_timing is empty, so no page can draw the timing chart",
         ))
 
     return checks

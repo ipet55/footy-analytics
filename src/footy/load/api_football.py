@@ -337,6 +337,125 @@ def store_fixtures(
     return written, mapping
 
 
+def store_events(
+    conn: psycopg.Connection, match_ids: dict[int, int], events: Iterable
+) -> int:
+    """Replace a match's events with what the source now reports.
+
+    Delete-then-insert rather than upsert, because there is no natural key: a
+    player can be booked twice, score twice inside added time, and come on and off.
+    Replacing per match is both idempotent and correct when a feed corrects itself,
+    which it does — a goal reassigned after a VAR review changes the scorer, not
+    the minute.
+    """
+    rows = []
+    for event in events:
+        match_id = match_ids.get(event.fixture_id)
+        if match_id is None:
+            continue
+        rows.append([
+            match_id, str(event.team_id), event.minute, event.extra_minute,
+            event.kind, event.detail, event.player_name, event.assist_name,
+        ])
+    if not rows:
+        return 0
+
+    with conn.cursor() as cur:
+        db.copy_into_temp(
+            conn,
+            "_af_event",
+            ["match_id", "source_team_id", "minute", "extra_minute", "kind",
+             "detail", "player_name", "assist_name"],
+            rows,
+            """
+            create temporary table _af_event (
+                match_id bigint, source_team_id text, minute smallint,
+                extra_minute smallint, kind text, detail text,
+                player_name text, assist_name text
+            )
+            """,
+        )
+        cur.execute(
+            "delete from core.match_event where match_id in "
+            "(select distinct match_id from _af_event)"
+        )
+        cur.execute(
+            """
+            insert into core.match_event (
+                match_id, team_id, minute, extra_minute, kind, detail,
+                player_name, assist_name, player_id, source_id
+            )
+            select e.match_id, ta.team_id, e.minute, e.extra_minute, e.kind,
+                   e.detail, e.player_name, e.assist_name,
+                   -- Linked only when the name resolves to exactly one known
+                   -- player. A guess here would attach a goal to the wrong career.
+                   (select p.player_id from core.player p
+                     where p.norm_name = core.norm_name(e.player_name)),
+                   src.source_id
+              from _af_event e
+              join core.source src on src.code = %s
+              join core.team_alias ta on ta.source_id = src.source_id
+                                     and ta.source_team_id = e.source_team_id
+            """,
+            (SOURCE_CODE,),
+        )
+        written = cur.rowcount
+        cur.execute("drop table _af_event")
+    return written
+
+
+def store_lineups(
+    conn: psycopg.Connection, match_ids: dict[int, int], lineups: Iterable
+) -> int:
+    """Formation and coach per team per match.
+
+    The named players are deliberately not written to core.appearance here.
+    core.player.norm_name is unique, so loading squads from leagues that have never
+    had players loaded would either collide or invent rows, and a team sheet is
+    useful on the page without every player existing as an entity first.
+    """
+    rows = [
+        [match_ids[lu.fixture_id], str(lu.team_id), lu.formation, lu.coach_name]
+        for lu in lineups
+        if lu.fixture_id in match_ids
+    ]
+    if not rows:
+        return 0
+
+    with conn.cursor() as cur:
+        db.copy_into_temp(
+            conn,
+            "_af_lineup",
+            ["match_id", "source_team_id", "formation", "coach_name"],
+            rows,
+            """
+            create temporary table _af_lineup (
+                match_id bigint, source_team_id text, formation text, coach_name text
+            )
+            """,
+        )
+        cur.execute(
+            """
+            insert into core.match_lineup (
+                match_id, team_id, formation, coach_name, source_id
+            )
+            select l.match_id, ta.team_id, l.formation, l.coach_name, src.source_id
+              from _af_lineup l
+              join core.source src on src.code = %s
+              join core.team_alias ta on ta.source_id = src.source_id
+                                     and ta.source_team_id = l.source_team_id
+            on conflict (match_id, team_id) do update
+                set formation  = coalesce(excluded.formation, core.match_lineup.formation),
+                    coach_name = coalesce(excluded.coach_name, core.match_lineup.coach_name),
+                    updated_at = now()
+            """,
+            (SOURCE_CODE,),
+        )
+        written = cur.rowcount
+        cur.execute("drop table _af_lineup")
+    return written
+
+
 def store_stats(
     conn: psycopg.Connection, match_ids: dict[int, int], stats: Iterable[TeamStat]
 ) -> int:

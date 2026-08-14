@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { MarketCard } from "@/components/MarketCard";
 import { StatBar } from "@/components/StatBar";
+import { Timeline } from "@/components/Timeline";
 import { formatDateLong } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
 import {
@@ -10,6 +11,7 @@ import {
   type HeadToHead,
   type Market,
   type MarketPrice,
+  type MatchEvent,
   type MatchStat,
   type Prediction,
   type TeamForm,
@@ -69,8 +71,9 @@ export default async function MatchPage({
   const matchId = Number(id);
   if (!Number.isFinite(matchId)) notFound();
 
-  const [fixtureRes, predictionRes, priceRes, formRes, h2hRes, marketRes, statRes] =
-    await Promise.all([
+  const [
+    fixtureRes, predictionRes, priceRes, formRes, h2hRes, marketRes, statRes, eventRes,
+  ] = await Promise.all([
       supabase.from("fixture").select("*").eq("match_id", matchId).maybeSingle(),
       supabase.from("prediction").select("*").eq("match_id", matchId),
       supabase.from("market_price").select("*").eq("match_id", matchId),
@@ -78,6 +81,7 @@ export default async function MatchPage({
       supabase.from("head_to_head").select("*").eq("match_id", matchId).maybeSingle(),
       supabase.from("market").select("market_code,label"),
       supabase.from("match_stat").select("*").eq("match_id", matchId).maybeSingle(),
+      supabase.from("match_event").select("*").eq("match_id", matchId),
     ]);
 
   const fixture = fixtureRes.data as Fixture | null;
@@ -88,6 +92,7 @@ export default async function MatchPage({
   const forms = (formRes.data ?? []) as TeamForm[];
   const h2h = h2hRes.data as HeadToHead | null;
   const stat = statRes.data as MatchStat | null;
+  const events = (eventRes.data ?? []) as MatchEvent[];
 
   const home = forms.find((f) => f.is_home);
   const away = forms.find((f) => !f.is_home);
@@ -156,6 +161,12 @@ export default async function MatchPage({
           </Link>
         </p>
       </header>
+
+      <Timeline
+        events={events}
+        homeGoals={fixture.home_goals_ft}
+        awayGoals={fixture.away_goals_ft}
+      />
 
       {stat && (
         <section className="overflow-hidden rounded-lg border border-border bg-surface">

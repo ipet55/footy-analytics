@@ -115,6 +115,46 @@ export type MatchStat = {
   away_xg: number | null;
 };
 
+export type MatchEvent = {
+  match_id: number;
+  team_id: number;
+  team: string;
+  is_home: boolean;
+  minute: number;
+  extra_minute: number | null;
+  kind: "goal" | "card" | "substitution" | "var" | "other";
+  detail: string | null;
+  player_name: string | null;
+  assist_name: string | null;
+};
+
+/** Goals by fifteen-minute band. Band 0 is minutes 1-15, band 5 is 76 onward. */
+export type TeamSeasonTiming = {
+  team_id: number;
+  team: string;
+  competition_code: string;
+  season: string;
+  side: "for" | "against";
+  venue: Venue;
+  band: number;
+  goals: number;
+};
+
+export type TeamSeasonFirst = {
+  team_id: number;
+  team: string;
+  competition_code: string;
+  season: string;
+  venue: Venue;
+  matches: number;
+  avg_first_scored: number | null;
+  avg_first_conceded: number | null;
+  matches_scored: number;
+  matches_conceded: number;
+  scored_first: number;
+  failed_to_score: number;
+};
+
 export type Team = {
   team_id: number;
   team: string;

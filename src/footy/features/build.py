@@ -246,6 +246,8 @@ MATERIALIZED = (
     "public.team",
     "public.team_season_measure",
     "public.team_season_line",
+    "public.team_season_timing",
+    "public.team_season_first",
 )
 
 

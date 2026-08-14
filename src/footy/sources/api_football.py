@@ -301,6 +301,101 @@ def fixtures(client: Client, competition_code: str, start_year: int) -> list[Fix
     return out
 
 
+@dataclass(frozen=True)
+class Event:
+    """Something that happened at a known minute."""
+
+    fixture_id: int
+    team_id: int
+    minute: int
+    extra_minute: int | None
+    kind: str
+    detail: str | None
+    player_name: str | None
+    assist_name: str | None
+
+
+@dataclass(frozen=True)
+class Lineup:
+    """One team's sheet: formation, coach, and who was named."""
+
+    fixture_id: int
+    team_id: int
+    formation: str | None
+    coach_name: str | None
+    # (player name, shirt number, position, started)
+    players: tuple[tuple[str, int | None, str | None, bool], ...]
+
+
+# API-Football's event vocabulary, mapped onto ours. Anything unrecognised becomes
+# 'other' rather than being dropped: an unknown event still happened, and a
+# timeline that silently omits things is worse than one with a vague entry.
+EVENT_KINDS = {
+    "goal": "goal",
+    "card": "card",
+    "subst": "substitution",
+    "var": "var",
+}
+
+
+def events(client: Client, fixture_ids: list[int]) -> Iterator[Event]:
+    """Goals, cards and substitutions with their minutes, one request per fixture."""
+    for fixture_id in fixture_ids:
+        for row in client.get("/fixtures/events", fixture=fixture_id):
+            time = row.get("time") or {}
+            minute = time.get("elapsed")
+            if minute is None:
+                continue
+            team = (row.get("team") or {}).get("id")
+            if team is None:
+                continue
+            yield Event(
+                fixture_id=fixture_id,
+                team_id=int(team),
+                minute=int(minute),
+                extra_minute=(
+                    int(time["extra"]) if time.get("extra") is not None else None
+                ),
+                kind=EVENT_KINDS.get(str(row.get("type", "")).lower(), "other"),
+                detail=(str(row.get("detail")).strip() or None) if row.get("detail") else None,
+                player_name=((row.get("player") or {}).get("name") or None),
+                assist_name=((row.get("assist") or {}).get("name") or None),
+            )
+
+
+def lineups(client: Client, fixture_ids: list[int]) -> Iterator[Lineup]:
+    """Team sheets, one request per fixture.
+
+    Confirmed lineups appear roughly an hour before kickoff, so this is useful
+    both as history and, run close to kickoff, as the live team news.
+    """
+    for fixture_id in fixture_ids:
+        for row in client.get("/fixtures/lineups", fixture=fixture_id):
+            team = (row.get("team") or {}).get("id")
+            if team is None:
+                continue
+            named: list[tuple[str, int | None, str | None, bool]] = []
+            for group, started in (("startXI", True), ("substitutes", False)):
+                for entry in row.get(group) or []:
+                    p = entry.get("player") or {}
+                    if not p.get("name"):
+                        continue
+                    named.append((
+                        str(p["name"]).strip(),
+                        int(p["number"]) if p.get("number") is not None else None,
+                        (str(p.get("pos")).strip() or None) if p.get("pos") else None,
+                        started,
+                    ))
+            yield Lineup(
+                fixture_id=fixture_id,
+                team_id=int(team),
+                formation=(str(row.get("formation")).strip() or None)
+                if row.get("formation") else None,
+                coach_name=((row.get("coach") or {}).get("name") or None),
+                players=tuple(named),
+            )
+
+
 def _number(value: Any) -> float | int | None:
     if value is None:
         return None

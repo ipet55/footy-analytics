@@ -507,6 +507,76 @@ def freshness(
     console.print(f"\n[green]all {len(checks)} checks pass[/green]")
 
 
+@app.command("load-events")
+def load_events(
+    competitions: str = typer.Option(
+        "", help="Comma-separated codes. Every competition with API-Football ids if omitted."
+    ),
+    season: int | None = typer.Option(None, help="Season starting year. Current if omitted."),
+    limit: int | None = typer.Option(None, help="Stop after this many matches."),
+    skip_lineups: bool = typer.Option(False, "--skip-lineups", help="Events only."),
+):
+    """Load goal, card and substitution minutes, and team sheets.
+
+    Two requests per match, which is the whole budget: this is the only data here
+    that cannot be fetched a season at a time. Restricted to matches that do not
+    already have events, so a re-run costs nothing for what is already stored.
+    """
+    from footy import maintain
+    from footy.load import api_football as af_load
+    from footy.sources import api_football as af
+
+    codes = [c.strip() for c in competitions.split(",") if c.strip()] or [
+        c for c in af.LEAGUE_IDS
+    ]
+    client = af.Client()
+    total_events = total_lineups = 0
+
+    for code in codes:
+        with db.connect() as conn:
+            year = season or maintain.current_season(conn, code)
+            rows = db.fetch_all(
+                conn,
+                """
+                select ms.source_match_id::bigint, ms.match_id
+                  from core.match_source ms
+                  join core.source s on s.source_id = ms.source_id
+                                    and s.code = 'api_football'
+                  join core.match m on m.match_id = ms.match_id
+                  join core.competition c using (competition_id)
+                  join core.season se on se.season_id = m.season_id
+                 where c.code = %s and se.start_year = %s
+                   and m.home_goals_ft is not null
+                   and not exists (select 1 from core.match_event e
+                                    where e.match_id = m.match_id)
+                 order by m.kickoff_date
+                """,
+                (code, year),
+            )
+        mapping = dict(rows[:limit] if limit else rows)
+        if not mapping:
+            console.print(f"{code} {year}: nothing to load")
+            continue
+
+        ids = list(mapping)
+        events = list(af.events(client, ids))
+        lineups = [] if skip_lineups else list(af.lineups(client, ids))
+        with db.connect() as conn:
+            n_ev = af_load.store_events(conn, mapping, events)
+            n_lu = af_load.store_lineups(conn, mapping, lineups)
+            conn.commit()
+        total_events += n_ev
+        total_lineups += n_lu
+        console.print(
+            f"{code} {year}: {len(mapping)} matches, {n_ev} events, {n_lu} lineups"
+            f"  [dim](day remaining {client.day_remaining})[/dim]"
+        )
+
+    console.print(
+        f"\n[green]{total_events:,} events, {total_lineups:,} lineups[/green]"
+    )
+
+
 @app.command("load-calendar")
 def load_calendar(
     competitions: str = typer.Option(

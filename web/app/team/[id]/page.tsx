@@ -1,12 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { GoalTiming } from "@/components/GoalTiming";
 import { formatDateShort } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
 import {
   COMPETITIONS,
   type Fixture,
+  type TeamSeasonFirst,
   type TeamSeasonLine,
   type TeamSeasonMeasure,
+  type TeamSeasonTiming,
   type Venue,
 } from "@/lib/types";
 
@@ -102,14 +105,33 @@ export default async function TeamPage({
     (r) => r.season === selected.season && r.competition_code === selected.competition
   );
 
-  const lineRes = await supabase
-    .from("team_season_line")
-    .select("*")
-    .eq("team_id", teamId)
-    .eq("competition_code", selected.competition)
-    .eq("season", selected.season)
-    .limit(2000);
+  const [lineRes, timingRes, firstRes] = await Promise.all([
+    supabase
+      .from("team_season_line")
+      .select("*")
+      .eq("team_id", teamId)
+      .eq("competition_code", selected.competition)
+      .eq("season", selected.season)
+      .limit(2000),
+    supabase
+      .from("team_season_timing")
+      .select("*")
+      .eq("team_id", teamId)
+      .eq("competition_code", selected.competition)
+      .eq("season", selected.season)
+      .eq("venue", "overall"),
+    supabase
+      .from("team_season_first")
+      .select("*")
+      .eq("team_id", teamId)
+      .eq("competition_code", selected.competition)
+      .eq("season", selected.season)
+      .eq("venue", "overall")
+      .maybeSingle(),
+  ]);
   const lines = (lineRes.data ?? []) as TeamSeasonLine[];
+  const timing = (timingRes.data ?? []) as TeamSeasonTiming[];
+  const first = firstRes.data as TeamSeasonFirst | null;
 
   const measureAt = (measure: string, venue: Venue) =>
     measures.find((m) => m.measure === measure && m.venue === venue);
@@ -190,6 +212,63 @@ export default async function TeamPage({
         account of who the opponent was, so a high rate here says nothing on its
         own about the next fixture — the probabilities on a match page do that.
       </p>
+
+      {(timing.length > 0 || first) && (
+        <div className="grid gap-4 xl:grid-cols-2">
+          <GoalTiming rows={timing} />
+          {first && (
+            <section className="overflow-hidden rounded-lg border border-border bg-surface">
+              <header className="border-b border-border px-4 py-3">
+                <h2 className="text-sm font-medium">Who scores first</h2>
+                <p className="mt-0.5 text-xs text-muted">
+                  Averaged over the matches it happened in, so a side that scores in
+                  half its games is not credited with a goal in the rest.
+                </p>
+              </header>
+              <table className="w-full text-sm">
+                <tbody className="divide-y divide-border">
+                  <tr>
+                    <td className="px-4 py-2">First goal scored</td>
+                    <td className="tnum px-4 py-2 text-right text-xs text-muted">
+                      in {first.matches_scored} of {first.matches}
+                    </td>
+                    <td className="tnum px-4 py-2 text-right font-medium">
+                      {first.avg_first_scored ?? "—"}&apos;
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-2">First goal conceded</td>
+                    <td className="tnum px-4 py-2 text-right text-xs text-muted">
+                      in {first.matches_conceded} of {first.matches}
+                    </td>
+                    <td className="tnum px-4 py-2 text-right font-medium">
+                      {first.avg_first_conceded ?? "—"}&apos;
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-2">Opened the scoring</td>
+                    <td className="tnum px-4 py-2 text-right text-xs text-muted">
+                      {first.scored_first} of {first.matches}
+                    </td>
+                    <td className="tnum px-4 py-2 text-right font-medium">
+                      {Math.round((first.scored_first / first.matches) * 100)}%
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-2">Failed to score</td>
+                    <td className="tnum px-4 py-2 text-right text-xs text-muted">
+                      {first.failed_to_score} of {first.matches}
+                    </td>
+                    <td className="tnum px-4 py-2 text-right font-medium">
+                      {Math.round((first.failed_to_score / first.matches) * 100)}%
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+          )}
+        </div>
+      )}
 
       <div className="grid gap-4 xl:grid-cols-2">
         {GROUPS.map((group) => {
