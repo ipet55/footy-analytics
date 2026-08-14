@@ -49,7 +49,11 @@ def register_aliases(
                     limit 1
               ) t on true
              where s.code = %s
-            on conflict (source_id, norm_name) do nothing
+            -- The name-uniqueness index is partial, covering only sources with no
+            -- id of their own, so the predicate has to be repeated for Postgres to
+            -- match it. This source resolves by name, so its rows are inside it.
+            on conflict (source_id, norm_name) where source_team_id is null
+                do nothing
             """,
             (ce.SOURCE_CODE,),
         )

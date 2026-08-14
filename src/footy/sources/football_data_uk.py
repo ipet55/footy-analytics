@@ -49,9 +49,42 @@ def target_files() -> list[CsvFile]:
     return files
 
 
+def looks_like_results(body: bytes, division: str | None = None) -> bool:
+    """Does this response contain results, and results for the division asked for?
+
+    Two separate failures, both seen on the same morning.
+
+    A season that has not started answers with an HTML error page, and a 200
+    carrying HTML is worse than a 404: it is written as a .csv, and since a file
+    that exists is never re-downloaded, the bad copy is cached forever.
+
+    Worse, some divisions answer with a *different division's* CSV. The 2026-27
+    E0 URL returned English National League fixtures and the SP1 URL returned
+    Portuguese ones. Both parse perfectly. Loading them wrote National League
+    clubs into the Premier League and Portuguese clubs into La Liga, and nothing
+    complained — the only visible symptom was a leakage test noticing two matches
+    on one day.
+
+    So the file's own `Div` column is what decides, not the URL it came from. That
+    column is authoritative and free to check.
+    """
+    text = body[:4000].lstrip(b"\xef\xbb\xbf").lstrip()
+    if not text.upper().startswith(b"DIV,"):
+        return False
+    if division is None:
+        return True
+    lines = text.splitlines()
+    if len(lines) < 2:
+        # A header with no rows is a season with no matches played, which is
+        # legitimate and carries nothing to contradict.
+        return True
+    first_field = lines[1].split(b",", 1)[0].strip().strip(b'"')
+    return first_field.decode("latin-1").upper() == division.upper()
+
+
 def download(files: list[CsvFile], force: bool = False, timeout: int = 60) -> list[tuple[CsvFile, str]]:
     """Download CSVs to disk. Returns (file, status) where status is
-    'cached', 'downloaded', 'unchanged' or an error string.
+    'cached', 'downloaded', 'unchanged', 'not published' or an error string.
     """
     results: list[tuple[CsvFile, str]] = []
     session = requests.Session()
@@ -67,6 +100,12 @@ def download(files: list[CsvFile], force: bool = False, timeout: int = 60) -> li
             body = resp.content
             if not body.strip():
                 results.append((f, "error: empty response"))
+                continue
+            if not looks_like_results(body, f.division):
+                # Not an error worth failing a run over: it is what a season that
+                # has not kicked off looks like. Deliberately not written, because
+                # writing it caches the wrong division forever.
+                results.append((f, "not published"))
                 continue
             f.path.parent.mkdir(parents=True, exist_ok=True)
             previous = f.path.read_bytes() if f.path.exists() else None

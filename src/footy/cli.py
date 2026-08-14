@@ -453,6 +453,60 @@ def load_api_football(
     )
 
 
+@app.command()
+def refresh(
+    days: int = typer.Option(21, help="How far ahead to predict."),
+    season: int | None = typer.Option(None, help="Override the in-progress season."),
+):
+    """A day's work: results in, features rebuilt, fixtures priced.
+
+    Safe to re-run and safe to interrupt — every loader is idempotent and commits
+    per season. Intended for a scheduler; `footy freshness` is what says whether it
+    is actually working.
+    """
+    from footy import maintain
+
+    report = maintain.refresh(days=days, season=season)
+    for step in report.steps:
+        colour = "red" if not step.ok else "green"
+        console.print(f"[{colour}]{step.name:14}[/{colour}] {step.detail}")
+    if report.failed:
+        console.print(f"\n[red]{len(report.failed)} step(s) failed[/red]")
+        raise typer.Exit(1)
+    console.print("\n[green]refresh complete[/green]")
+
+
+@app.command()
+def freshness(
+    max_result_age: int = typer.Option(4, help="Days a league may go without a result."),
+):
+    """Assert that the data is current, and exit non-zero when it is not.
+
+    Written as claims about the data rather than about the job, because a job that
+    has stopped running raises nothing. Every real incident here has been silent:
+    a view nobody refreshed, a cached file never re-downloaded, a truncated read
+    that emptied a page. All of them looked like working software.
+    """
+    from footy import maintain
+
+    checks = maintain.freshness(max_result_age=max_result_age)
+    table = Table(title="Freshness")
+    table.add_column("Check")
+    table.add_column("Value", justify="right")
+    table.add_column("")
+    for c in checks:
+        table.add_row(
+            c.name, c.value,
+            "[green]ok[/green]" if c.ok else f"[red]FAIL — {c.note}[/red]",
+        )
+    console.print(table)
+    bad = [c for c in checks if not c.ok]
+    if bad:
+        console.print(f"\n[red]{len(bad)} of {len(checks)} checks failed[/red]")
+        raise typer.Exit(1)
+    console.print(f"\n[green]all {len(checks)} checks pass[/green]")
+
+
 @app.command("load-calendar")
 def load_calendar(
     competitions: str = typer.Option(

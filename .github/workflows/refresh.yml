@@ -1,0 +1,63 @@
+name: refresh
+
+# Twice a day. Once is not enough during a season — European fixtures kick off
+# late and results land after midnight UTC — and hourly buys nothing, because the
+# fit is stable across a fortnight and refitting more often adds noise, not
+# accuracy.
+#
+# The schedule is deliberately not on the hour. Everybody schedules on the hour,
+# GitHub queues those runs, and a job that starts twenty minutes late looks
+# identical to a job that failed.
+on:
+  schedule:
+    - cron: "37 6 * * *"
+    - cron: "37 18 * * *"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: How far ahead to predict
+        default: "21"
+
+concurrency:
+  # Two overlapping runs would both refit and both write predictions. The loaders
+  # are idempotent so it would not corrupt anything, but it doubles the API spend
+  # for no benefit.
+  group: refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # Matches the setup in the README rather than `uv sync`: there is no
+      # lockfile in the repository, and adding one here would leave CI installing
+      # something different from every local checkout.
+      - name: Install
+        run: |
+          uv venv --python 3.12
+          uv pip install -e .
+
+      - name: Refresh
+        run: .venv/bin/footy refresh --days "${{ inputs.days || '21' }}"
+
+      # Separate step so the log says which of the two failed. A refresh that
+      # errors and a refresh that succeeds while leaving the data stale need
+      # different responses, and the second is the one that goes unnoticed.
+      - name: Assert the data is current
+        run: .venv/bin/footy freshness
+
+      - name: Report
+        if: failure()
+        run: |
+          echo "::error::refresh failed — data may be stale on the site"
+          .venv/bin/footy freshness || true

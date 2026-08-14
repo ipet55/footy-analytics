@@ -94,7 +94,11 @@ def register_aliases(
                     limit 1
               ) t on true
              where s.code = %s
-            on conflict (source_id, norm_name) do nothing
+            -- The name-uniqueness index is partial, covering only sources with no
+            -- id of their own, so the predicate has to be repeated for Postgres to
+            -- match it. This source resolves by name, so its rows are inside it.
+            on conflict (source_id, norm_name) where source_team_id is null
+                do nothing
             """,
             (SOURCE_CODE,),
         )
@@ -162,7 +166,11 @@ def seed_promoted(
               from core.team t cross join core.source s
              where core.norm_name(t.canonical_name) = core.norm_name(%s)
                and t.country = %s and s.code = %s
-            on conflict (source_id, norm_name) do nothing
+            -- The name-uniqueness index is partial, covering only sources with no
+            -- id of their own, so the predicate has to be repeated for Postgres to
+            -- match it. This source resolves by name, so its rows are inside it.
+            on conflict (source_id, norm_name) where source_team_id is null
+                do nothing
             """,
             sorted(
                 (raw, canonical_name, country, SOURCE_CODE)

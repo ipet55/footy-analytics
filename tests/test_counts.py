@@ -43,10 +43,11 @@ def synthetic(n_teams: int = 8, n_matches: int = 240, with_referees: bool = Fals
 
 
 @pytest.mark.parametrize("stat", ["corners", "cards", "fouls", "shots"])
-def test_total_gradient_matches_finite_differences(stat):
+@pytest.mark.parametrize("shrinkage", [0.0, cm.SHRINKAGE])
+def test_total_gradient_matches_finite_differences(stat, shrinkage):
     spec = cm.SPECS[stat]
     home, away, hc, ac, days_ago, refs = synthetic(with_referees=spec.use_referee)
-    d = cm.build_design(home, away, days_ago, spec, refs)
+    d = cm.build_design(home, away, days_ago, spec, refs, shrinkage=shrinkage)
     totals = hc + ac
 
     n_params = (
@@ -64,10 +65,15 @@ def test_total_gradient_matches_finite_differences(stat):
 
 
 @pytest.mark.parametrize("stat", ["corners", "cards"])
-def test_count_gradient_matches_finite_differences(stat):
+@pytest.mark.parametrize("shrinkage", [0.0, cm.SHRINKAGE])
+def test_count_gradient_matches_finite_differences(stat, shrinkage):
+    """Shrinkage is checked here as well as at zero because concede is penalised
+    against its own mean rather than against zero, and the derivative of that
+    relies on the deviations summing to zero. A sign error there would fit a
+    different model and raise nothing."""
     spec = cm.SPECS[stat]
     home, away, hc, ac, days_ago, refs = synthetic(with_referees=spec.use_referee)
-    d = cm.build_design(home, away, days_ago, spec, refs)
+    d = cm.build_design(home, away, days_ago, spec, refs, shrinkage=shrinkage)
 
     n_params = (
         (d.n_teams - 1) + d.n_teams + 1 + d.n_dispersion + d.n_referees

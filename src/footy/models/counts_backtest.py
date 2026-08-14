@@ -248,6 +248,7 @@ def fit_models(
     spec: cm.CountSpec,
     xi: float | None,
     features: bl.Features | None = None,
+    shrinkage: float = cm.SHRINKAGE,
 ) -> Models:
     """Fit both count models on `history`, decaying each match from `asof`.
 
@@ -266,13 +267,13 @@ def fit_models(
     models = Models(
         total=cm.fit_total(
             home_ids, away_ids, np.array([h.total for h in history], float),
-            days_ago, spec, referee_ids=referees, xi=xi,
+            days_ago, spec, referee_ids=referees, xi=xi, shrinkage=shrinkage,
         ),
         team=cm.fit(
             home_ids, away_ids,
             np.array([h.home_count for h in history], float),
             np.array([h.away_count for h in history], float),
-            days_ago, spec, referee_ids=referees, xi=xi,
+            days_ago, spec, referee_ids=referees, xi=xi, shrinkage=shrinkage,
         ),
     )
     if features is None:
@@ -311,6 +312,7 @@ def run(
     warmup_matches: int = 400,
     base_window: int = 380,
     blend: bool = False,
+    shrinkage: float = cm.SHRINKAGE,
 ) -> Backtest:
     """Walk forward over [test_from, test_to).
 
@@ -409,7 +411,7 @@ def run(
         if last_fit is None or (m.kickoff - last_fit) >= timedelta(days=refit_every_days):
             history = [h for h in matches if h.kickoff < m.kickoff]
             if len(history) >= min_train:
-                models = fit_models(history, m.kickoff, spec, xi, features)
+                models = fit_models(history, m.kickoff, spec, xi, features, shrinkage)
                 last_fit = m.kickoff
                 out.n_refits += 1
                 if warmed_up:

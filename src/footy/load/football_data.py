@@ -109,7 +109,12 @@ def seed_teams(conn: psycopg.Connection, seasons: list[ParsedSeason]) -> tuple[i
               join core.team t on core.norm_name(t.canonical_name) = core.norm_name(st.canonical_name)
              cross join core.source s
              where s.code = %s
-            on conflict (source_id, norm_name) do nothing
+            -- The name-uniqueness index is partial, covering only sources with no
+            -- id of their own, so the predicate has to be repeated here for
+            -- Postgres to match it. This source has no ids, so the rows inserted
+            -- are always inside it.
+            on conflict (source_id, norm_name) where source_team_id is null
+                do nothing
             """,
             (SOURCE_CODE,),
         )

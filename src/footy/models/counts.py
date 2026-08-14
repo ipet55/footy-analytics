@@ -26,6 +26,22 @@ from scipy.special import digamma, gammaln
 
 MAX_COUNT = 40
 
+# How hard team parameters are pulled toward the league average, per effective
+# match. Same mechanism as the goals model, added for the same reason and after
+# assuming it was unnecessary: a club promoted with two matches played was fitted
+# to a card rate of 0.009 against a league mean of 1.6, which underflows to a
+# probability of zero and the database rejects it.
+#
+# Unlike the goals model, this is a robustness setting rather than an accuracy one.
+# Swept across seven leagues, four statistics and 308 market-lines, the mean gain
+# moves from 4.501% unshrunk to 4.555% here — a difference inside the noise, for
+# the same reason the bug was invisible in the first place: one club in one league
+# does not move a mean over 308 series. It was best on both the choosing and the
+# reporting window, and it leaves the spread of team rates wide (0.72 to 2.16 on
+# Eredivisie cards, mean 1.59), so informed teams keep their signal while a club
+# with two matches is no longer priced at a hundredth of the league average.
+SHRINKAGE = 0.25
+
 
 @dataclass(frozen=True)
 class CountSpec:
@@ -247,6 +263,10 @@ class Design:
     referee_of_match: np.ndarray
     referee_penalty: float
     negative_binomial: bool
+    # Weight of the L2 penalty pulling team parameters toward the league average,
+    # scaled against the training set's total time-decayed weight so it means the
+    # same in a league with a decade of history as in one with two seasons.
+    strength_penalty: float = 0.0
 
     @property
     def n_teams(self) -> int:
@@ -277,6 +297,7 @@ def build_design(
     referee_ids: np.ndarray | None = None,
     xi: float | None = None,
     referee_penalty: float = 20.0,
+    shrinkage: float = SHRINKAGE,
 ) -> Design:
     teams = sorted(set(home_ids.tolist()) | set(away_ids.tolist()))
     index = {t: i for i, t in enumerate(teams)}
@@ -290,12 +311,14 @@ def build_design(
         )
     else:
         refs, ref_index, ri = [], {}, np.zeros(len(home_ids), int) - 1
+    weights = np.exp(-(spec.xi if xi is None else xi) * days_ago)
     return Design(
         teams=teams,
         index=index,
         home=np.array([index[t] for t in home_ids]),
         away=np.array([index[t] for t in away_ids]),
-        weights=np.exp(-(spec.xi if xi is None else xi) * days_ago),
+        weights=weights,
+        strength_penalty=shrinkage * float(weights.sum()) / max(len(teams), 1),
         referees=refs,
         referee_index=ref_index,
         referee_of_match=ri,
@@ -331,6 +354,8 @@ def total_objective(
         else negative_binomial_loglik(totals, mu, dispersion)
     )
     penalty = d.referee_penalty * float(np.sum(ref_effects**2))
+    if d.strength_penalty:
+        penalty += d.strength_penalty * float(np.sum(tempo**2))
     value = float(-np.sum(d.weights * ll) + penalty)
 
     g = d.weights * _d_loglik_d_log_mu(totals, mu, dispersion)
@@ -342,6 +367,8 @@ def total_objective(
         np.bincount(d.home, weights=g, minlength=n)
         + np.bincount(d.away, weights=g, minlength=n)
     )
+    if d.strength_penalty:
+        tempo_grad = tempo_grad - 2.0 * d.strength_penalty * tempo
     grad[: n - 1] = -(tempo_grad[: n - 1] - tempo_grad[n - 1])
     grad[n - 1] = -g.sum()
     if d.n_dispersion:
@@ -366,9 +393,11 @@ def fit_total(
     referee_ids: np.ndarray | None = None,
     xi: float | None = None,
     referee_penalty: float = 20.0,
+    shrinkage: float = SHRINKAGE,
 ) -> FittedTotal:
     d = build_design(
-        home_ids, away_ids, days_ago, spec, referee_ids, xi, referee_penalty
+        home_ids, away_ids, days_ago, spec, referee_ids, xi, referee_penalty,
+        shrinkage,
     )
     n, n_disp, n_ref = d.n_teams, d.n_dispersion, d.n_referees
 
@@ -438,6 +467,15 @@ def count_objective(
             home_counts, mu_home, dispersion
         ) + negative_binomial_loglik(away_counts, mu_away, dispersion)
     penalty = d.referee_penalty * float(np.sum(ref_effects**2))
+    if d.strength_penalty:
+        # Attack is centred on zero, so penalising it pulls a team toward the
+        # league average. Concede is not centred — it carries the level of the
+        # statistic — so it is penalised against its own mean instead. Penalising
+        # concede toward zero would drag every team's rate toward one card a
+        # match, which is the bug this exists to prevent, not a fix for it.
+        penalty += d.strength_penalty * float(
+            np.sum(attack**2) + np.sum((concede - concede.mean()) ** 2)
+        )
     value = float(-np.sum(d.weights * ll) + penalty)
 
     gh = d.weights * _d_loglik_d_log_mu(home_counts, mu_home, dispersion)
@@ -453,6 +491,12 @@ def count_objective(
         np.bincount(d.away, weights=gh, minlength=n)
         + np.bincount(d.home, weights=ga, minlength=n)
     )
+    if d.strength_penalty:
+        pen = 2.0 * d.strength_penalty
+        attack_grad = attack_grad - pen * attack
+        # d/d concede_i of sum((c - mean(c))^2) is 2(c_i - mean(c)), the mean's own
+        # derivative cancelling because the deviations sum to zero.
+        concede_grad = concede_grad - pen * (concede - concede.mean())
     grad[:n_attack] = -(attack_grad[:n_attack] - attack_grad[n - 1])
     grad[n_attack : n_attack + n] = -concede_grad
     offset = n_attack + n
@@ -487,9 +531,11 @@ def fit(
     referee_ids: np.ndarray | None = None,
     xi: float | None = None,
     referee_penalty: float = 20.0,
+    shrinkage: float = SHRINKAGE,
 ) -> FittedCount:
     d = build_design(
-        home_ids, away_ids, days_ago, spec, referee_ids, xi, referee_penalty
+        home_ids, away_ids, days_ago, spec, referee_ids, xi, referee_penalty,
+        shrinkage,
     )
     n, n_disp, n_ref = d.n_teams, d.n_dispersion, d.n_referees
 

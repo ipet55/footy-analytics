@@ -115,6 +115,13 @@ CANONICAL_NAME: dict[str, str] = {
     "Marseille": "Olympique de Marseille",
     "Paris SG": "Paris Saint-Germain",
     "St Etienne": "Saint-Etienne",
+    # Belgium. These two are here because they were missed, and the way they were
+    # missed is worth recording: this source and API-Football disagree about the
+    # name, the calendar arrived from one and the result from the other, and the
+    # same match was stored twice under two identities of the same club. Nothing
+    # failed — a leakage test noticed a club playing twice in one day.
+    "Beveren": "Waasland-Beveren",
+    "Lommel SK": "Lommel United",
 }
 
 # Short display name for compact UI, where the canonical name is unwieldy.
