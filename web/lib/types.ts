@@ -41,11 +41,47 @@ export type MarketPrice = {
 
 export type Market = {
   market_code: string;
+  competition_code: string;
   stat: string;
   scope: string;
   kind: string;
   label: string;
   notes: string | null;
+};
+
+/** How often a team actually went over a line, counted from matches played.
+ *  History, not prediction: it does not adjust for the opponent. */
+export type TeamSeasonSummary = {
+  team_id: number;
+  team: string;
+  competition_code: string;
+  season: string;
+  start_year: number;
+  measure: string;
+  line: number;
+  matches: number;
+  over_count: number;
+  over_rate: number;
+  mean_value: number;
+};
+
+export type TeamSeasonVenue = {
+  team_id: number;
+  team: string;
+  competition_code: string;
+  season: string;
+  venue: "home" | "away";
+  matches: number;
+  goals_for: number;
+  goals_against: number;
+  corners_for: number;
+  corners_against: number;
+  shots_for: number;
+  cards: number;
+  fouls: number;
+  scored_rate: number;
+  conceded_rate: number;
+  points_per_game: number;
 };
 
 export type TeamForm = {
@@ -92,4 +128,13 @@ export const COMPETITIONS: Record<string, string> = {
   "GER-BL": "Bundesliga",
   "ITA-SA": "Serie A",
   "FRA-L1": "Ligue 1",
+  "NED-ED": "Eredivisie",
+  "POR-PL": "Liga Portugal",
+  "TUR-SL": "Süper Lig",
+  "BEL-PL": "Belgian Pro League",
+  "BUL-1L": "Bulgaria First League",
+  "CZE-1L": "Czech First League",
+  "NOR-EL": "Eliteserien",
+  "INT-UCL": "Champions League",
+  "INT-UEL": "Europa League",
 };

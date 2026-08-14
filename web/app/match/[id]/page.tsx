@@ -125,6 +125,26 @@ export default async function MatchPage({
           {formatDateLong(fixture.kickoff_date)}
           {fixture.venue_name ? ` · ${fixture.venue_name}` : ""}
         </p>
+        <p className="mt-3 text-sm">
+          <span className="text-muted">Season history: </span>
+          <Link
+            href={`/team/${fixture.home_team_id}?competition=${encodeURIComponent(
+              fixture.competition_code
+            )}&season=${encodeURIComponent(fixture.season)}`}
+            className="text-accent transition hover:underline"
+          >
+            {fixture.home_team}
+          </Link>
+          <span className="mx-2 text-muted">·</span>
+          <Link
+            href={`/team/${fixture.away_team_id}?competition=${encodeURIComponent(
+              fixture.competition_code
+            )}&season=${encodeURIComponent(fixture.season)}`}
+            className="text-accent transition hover:underline"
+          >
+            {fixture.away_team}
+          </Link>
+        </p>
       </header>
 
       {predictions.length === 0 ? (
