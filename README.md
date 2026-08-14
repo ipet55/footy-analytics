@@ -279,13 +279,24 @@ on other data, which is asserted in `tests/test_public_surface.py`.
 Bulgaria, the Czech league, Eliteserien and the two UEFA competitions are loaded
 and measured but publish nothing yet.
 
-Alongside the predictions there is now a team page carrying the opposite kind of
-number: counts of what happened in the matches a team played, per season and per
-competition, from `public.team_season_summary`. Arsenal went over 0.5 goals in 92%
-of their 2025/26 league games and 93% of their Champions League ones. It is
-history and not prediction — it makes no adjustment for the opponent — and both
-the view comment and the page say so, because it is the easiest number here to
-misread as a forecast.
+Alongside the predictions there is a Teams tab carrying the opposite kind of
+number: counts of what happened in the matches a team played, split overall, at
+home and away, from `public.team_season_measure` and `public.team_season_line`.
+Galatasaray earned 5.50 corners a game in 2025/26 — 6.53 at home and 4.47 away —
+and had more than their opponent in 82% of home games against 53% away. That
+split is most of the information, and a single season average hides it.
+
+Those two are materialized. As plain views they aggregated 99,000 team-match rows
+across nine measures, several lines and two grouping sets on every request, which
+took 3.4 seconds and exceeded the API's statement timeout — and a timed-out query
+is indistinguishable from an unknown team, so the page returned 404. They are
+refreshed by `footy build-features` alongside the odds views, because a stale team
+page would show a season ending several matches early and look entirely plausible
+doing it.
+
+It is history and not prediction — it makes no adjustment for the opponent — and
+both the view comments and the page say so, because it is the easiest number here
+to misread as a forecast.
 
 ## Does it beat the bookmaker?
 

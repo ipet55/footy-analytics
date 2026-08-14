@@ -28,12 +28,26 @@ export default function RootLayout({
                 model vs market
               </span>
             </Link>
-            <Link
-              href="/accuracy"
-              className="text-sm text-muted transition hover:text-foreground"
-            >
-              Track record
-            </Link>
+            <nav className="flex items-center gap-5 text-sm">
+              <Link
+                href="/"
+                className="text-muted transition hover:text-foreground"
+              >
+                Fixtures
+              </Link>
+              <Link
+                href="/teams"
+                className="text-muted transition hover:text-foreground"
+              >
+                Teams
+              </Link>
+              <Link
+                href="/accuracy"
+                className="text-muted transition hover:text-foreground"
+              >
+                Track record
+              </Link>
+            </nav>
           </div>
         </header>
         <main className="mx-auto max-w-6xl px-5 py-8">{children}</main>

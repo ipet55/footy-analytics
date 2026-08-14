@@ -30,7 +30,8 @@ VIEWS = (
     # Descriptive rather than predictive: counts of what happened in matches a
     # team played. Safe to publish for the opposite reason to the others — they
     # contain no model output at all, only results that are already public.
-    "team_season_summary", "team_season_venue",
+    # Materialized, so they appear as relkind 'm' rather than 'v'.
+    "team", "team_season_measure", "team_season_line",
 )
 
 

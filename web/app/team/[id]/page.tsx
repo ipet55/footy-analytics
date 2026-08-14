@@ -5,39 +5,51 @@ import { supabase } from "@/lib/supabase";
 import {
   COMPETITIONS,
   type Fixture,
-  type TeamSeasonSummary,
-  type TeamSeasonVenue,
+  type TeamSeasonLine,
+  type TeamSeasonMeasure,
+  type Venue,
 } from "@/lib/types";
 
 export const revalidate = 300;
 
-// The order measures read in, most asked-about first. Anything not listed still
-// renders, after these — the view decides what exists, not this list.
-const MEASURE_ORDER = [
-  "goals scored",
-  "goals conceded",
-  "goals total",
-  "corners for",
-  "corners against",
-  "corners total",
-  "shots",
-  "fouls",
-  "cards",
+const VENUES: Venue[] = ["overall", "home", "away"];
+const VENUE_LABEL: Record<Venue, string> = {
+  overall: "Overall",
+  home: "At home",
+  away: "At away",
+};
+
+// Measures paired so a table reads as one subject: what the team did, then what
+// was done to it. The "against" side is the second column group of the same
+// card rather than a card of its own, because the comparison is the point.
+const GROUPS: Array<{ title: string; forMeasure: string; againstMeasure?: string }> = [
+  { title: "Corners", forMeasure: "corners for", againstMeasure: "corners against" },
+  { title: "Goals", forMeasure: "goals scored", againstMeasure: "goals conceded" },
+  { title: "Corners in the match", forMeasure: "corners total" },
+  { title: "Goals in the match", forMeasure: "goals total" },
+  { title: "Shots", forMeasure: "shots" },
+  { title: "Fouls", forMeasure: "fouls" },
+  { title: "Cards", forMeasure: "cards" },
 ];
 
-function rank(measure: string) {
-  const i = MEASURE_ORDER.indexOf(measure);
-  return i === -1 ? MEASURE_ORDER.length : i;
+function pct(value: number | null) {
+  return value === null ? "—" : `${Math.round(Number(value) * 100)}%`;
 }
 
-function pct(value: number) {
-  return `${(Number(value) * 100).toFixed(0)}%`;
-}
-
-/** Postgres numerics arrive as strings often enough that trusting the declared
- *  type produces a column reading "16.053" beside one reading "13". */
 function num(value: number, places = 2) {
   return Number(value).toFixed(places);
+}
+
+/** Green through to red, by how often something happened. Mirrors how these
+ *  tables are read everywhere else: the colour is the first thing scanned and
+ *  the number confirms it. */
+function heat(rate: number | null) {
+  if (rate === null) return "text-muted";
+  const r = Number(rate);
+  if (r >= 0.8) return "text-edge-positive";
+  if (r >= 0.6) return "text-foreground";
+  if (r >= 0.4) return "text-muted";
+  return "text-edge-negative";
 }
 
 export default async function TeamPage({
@@ -52,25 +64,27 @@ export default async function TeamPage({
   if (!Number.isFinite(teamId)) notFound();
   const { season: wantSeason, competition: wantCompetition } = await searchParams;
 
-  const [summaryRes, venueRes] = await Promise.all([
-    supabase
-      .from("team_season_summary")
-      .select("*")
-      .eq("team_id", teamId)
-      .order("start_year", { ascending: false }),
-    supabase.from("team_season_venue").select("*").eq("team_id", teamId),
-  ]);
+  // Two round trips rather than one, because the second has to be filtered to a
+  // single season. A club with a long European record has thousands of line
+  // rows, and an unfiltered fetch silently stops at the API's default page size
+  // — leaving the tables empty while every other part of the page renders, which
+  // looks like a layout bug rather than a truncated read.
+  const measureRes = await supabase
+    .from("team_season_measure")
+    .select("*")
+    .eq("team_id", teamId)
+    .order("start_year", { ascending: false })
+    .limit(4000);
 
-  const allRows = (summaryRes.data ?? []) as TeamSeasonSummary[];
-  if (allRows.length === 0) notFound();
+  const allMeasures = (measureRes.data ?? []) as TeamSeasonMeasure[];
+  if (allMeasures.length === 0) notFound();
 
-  const teamName = allRows[0].team;
+  const teamName = allMeasures[0].team;
 
-  // Seasons a team appeared in, newest first, each tied to its competition —
-  // a club can be in two at once, so the pair is the unit, not the season.
+  // A club can be in two competitions at once, so the unit is the pair.
   const periods = [
     ...new Map(
-      allRows.map((r) => [
+      allMeasures.map((r) => [
         `${r.competition_code}|${r.season}`,
         { competition: r.competition_code, season: r.season, year: r.start_year },
       ])
@@ -84,26 +98,39 @@ export default async function TeamPage({
         (!wantCompetition || p.competition === wantCompetition)
     ) ?? periods[0];
 
-  const rows = allRows.filter(
+  const measures = allMeasures.filter(
     (r) => r.season === selected.season && r.competition_code === selected.competition
   );
-  const venues = ((venueRes.data ?? []) as TeamSeasonVenue[]).filter(
-    (v) => v.season === selected.season && v.competition_code === selected.competition
-  );
-  const home = venues.find((v) => v.venue === "home");
-  const away = venues.find((v) => v.venue === "away");
 
-  const byMeasure = new Map<string, TeamSeasonSummary[]>();
-  for (const row of rows) {
-    const list = byMeasure.get(row.measure) ?? [];
-    list.push(row);
-    byMeasure.set(row.measure, list);
-  }
-  const measures = [...byMeasure.entries()].sort(
-    (a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0])
-  );
+  const lineRes = await supabase
+    .from("team_season_line")
+    .select("*")
+    .eq("team_id", teamId)
+    .eq("competition_code", selected.competition)
+    .eq("season", selected.season)
+    .limit(2000);
+  const lines = (lineRes.data ?? []) as TeamSeasonLine[];
 
-  const matches = rows[0]?.matches ?? 0;
+  const measureAt = (measure: string, venue: Venue) =>
+    measures.find((m) => m.measure === measure && m.venue === venue);
+  const linesFor = (measure: string) => {
+    const values = [
+      ...new Set(lines.filter((l) => l.measure === measure).map((l) => Number(l.line))),
+    ].sort((a, b) => a - b);
+    return values.map((line) => ({
+      line,
+      byVenue: Object.fromEntries(
+        VENUES.map((v) => [
+          v,
+          lines.find(
+            (l) => l.measure === measure && l.venue === v && Number(l.line) === line
+          ) ?? null,
+        ])
+      ) as Record<Venue, TeamSeasonLine | null>,
+    }));
+  };
+
+  const overall = measureAt("goals scored", "overall");
 
   const recentRes = await supabase
     .from("fixture")
@@ -113,26 +140,27 @@ export default async function TeamPage({
     .eq("season", selected.season)
     .not("home_goals_ft", "is", null)
     .order("kickoff_date", { ascending: false })
-    .limit(10);
+    .limit(8);
   const recent = (recentRes.data ?? []) as Fixture[];
 
   return (
     <div className="space-y-8">
-      <Link href="/" className="text-sm text-muted transition hover:text-foreground">
-        ← All fixtures
+      <Link href="/teams" className="text-sm text-muted transition hover:text-foreground">
+        ← All teams
       </Link>
 
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">{teamName}</h1>
         <p className="mt-1 text-sm text-muted">
           {COMPETITIONS[selected.competition] ?? selected.competition} ·{" "}
-          {selected.season} · {matches} matches played
+          {selected.season} · {overall?.matches ?? 0} matches ·{" "}
+          {overall ? num(overall.points_per_game) : "—"} points per game
         </p>
       </header>
 
       {periods.length > 1 && (
         <nav className="flex flex-wrap gap-2">
-          {periods.slice(0, 16).map((p) => {
+          {periods.slice(0, 18).map((p) => {
             const active =
               p.season === selected.season && p.competition === selected.competition;
             return (
@@ -158,87 +186,155 @@ export default async function TeamPage({
       )}
 
       <p className="rounded-lg border border-border bg-surface p-4 text-sm text-muted">
-        These are counts of what happened in the matches this team played, not
-        forecasts. They take no account of who the opponent was, so a high rate
-        here says nothing on its own about the next fixture — the model
-        probabilities on a match page do that job.
+        Counts of what happened in the matches this team played. They take no
+        account of who the opponent was, so a high rate here says nothing on its
+        own about the next fixture — the probabilities on a match page do that.
       </p>
 
-      {home && away && (
-        <section>
-          <h2 className="mb-3 text-sm font-semibold tracking-tight">
-            Home and away
-          </h2>
-          <div className="overflow-hidden rounded-lg border border-border bg-surface">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-xs uppercase tracking-widest text-muted">
-                  <th className="px-4 py-2 text-left font-medium">Split</th>
-                  <th className="px-4 py-2 text-right font-medium">Games</th>
-                  <th className="px-4 py-2 text-right font-medium">Scored</th>
-                  <th className="px-4 py-2 text-right font-medium">Conceded</th>
-                  <th className="px-4 py-2 text-right font-medium">Corners</th>
-                  <th className="px-4 py-2 text-right font-medium">Shots</th>
-                  <th className="px-4 py-2 text-right font-medium">Pts/game</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {[home, away].map((v) => (
-                  <tr key={v.venue}>
-                    <td className="px-4 py-2 capitalize">{v.venue}</td>
-                    <td className="tnum px-4 py-2 text-right text-muted">{v.matches}</td>
-                    <td className="tnum px-4 py-2 text-right">{num(v.goals_for)}</td>
-                    <td className="tnum px-4 py-2 text-right">{num(v.goals_against)}</td>
-                    <td className="tnum px-4 py-2 text-right">{num(v.corners_for)}</td>
-                    <td className="tnum px-4 py-2 text-right">{num(v.shots_for)}</td>
-                    <td className="tnum px-4 py-2 text-right">{num(v.points_per_game)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
-
-      <section>
-        <h2 className="mb-3 text-sm font-semibold tracking-tight">
-          How often each line was passed
-        </h2>
-        <div className="grid gap-4 lg:grid-cols-2">
-          {measures.map(([measure, lines]) => (
-            <div
-              key={measure}
+      <div className="grid gap-4 xl:grid-cols-2">
+        {GROUPS.map((group) => {
+          const rows = linesFor(group.forMeasure);
+          if (rows.length === 0) return null;
+          return (
+            <section
+              key={group.title}
               className="overflow-hidden rounded-lg border border-border bg-surface"
             >
               <header className="border-b border-border px-4 py-3">
-                <h3 className="text-sm font-medium capitalize">{measure}</h3>
+                <h2 className="text-sm font-medium">{group.title}</h2>
                 <p className="mt-0.5 text-xs text-muted">
-                  {num(lines[0].mean_value)} per match across {lines[0].matches} games
+                  {measureAt(group.forMeasure, "overall")?.total ?? 0} in{" "}
+                  {measureAt(group.forMeasure, "overall")?.matches ?? 0} matches
                 </p>
               </header>
-              <table className="w-full text-sm">
-                <tbody className="divide-y divide-border">
-                  {[...lines]
-                    .sort((a, b) => a.line - b.line)
-                    .map((row) => (
-                      <tr key={row.line}>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-xs uppercase tracking-widest text-muted">
+                      <th className="px-4 py-2 text-left font-medium">Measure</th>
+                      {VENUES.map((v) => (
+                        <th key={v} className="px-4 py-2 text-right font-medium">
+                          {VENUE_LABEL[v]}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    <tr>
+                      <td className="px-4 py-2">Per match</td>
+                      {VENUES.map((v) => {
+                        const m = measureAt(group.forMeasure, v);
+                        return (
+                          <td key={v} className="tnum px-4 py-2 text-right font-medium">
+                            {m ? num(m.per_match) : "—"}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                    {measureAt(group.forMeasure, "overall")?.beat_opponent_rate !==
+                      undefined &&
+                      measureAt(group.forMeasure, "overall")?.beat_opponent_rate !==
+                        null && (
+                        <tr>
+                          <td className="px-4 py-2">More than opponent</td>
+                          {VENUES.map((v) => {
+                            const rate =
+                              measureAt(group.forMeasure, v)?.beat_opponent_rate ?? null;
+                            return (
+                              <td
+                                key={v}
+                                className={`tnum px-4 py-2 text-right font-medium ${heat(rate)}`}
+                              >
+                                {pct(rate)}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      )}
+                    {rows.map(({ line, byVenue }) => (
+                      <tr key={line}>
                         <td className="px-4 py-2">
-                          Over <span className="text-muted">{row.line}</span>
+                          Over <span className="text-muted">{line}</span>
                         </td>
-                        <td className="tnum px-4 py-2 text-right text-xs text-muted">
-                          {row.over_count} of {row.matches}
-                        </td>
-                        <td className="tnum px-4 py-2 text-right font-medium">
-                          {pct(row.over_rate)}
-                        </td>
+                        {VENUES.map((v) => {
+                          const row = byVenue[v];
+                          return (
+                            <td
+                              key={v}
+                              className={`tnum px-4 py-2 text-right ${heat(
+                                row ? row.over_rate : null
+                              )}`}
+                              title={
+                                row
+                                  ? `${row.over_count} of ${row.matches} matches`
+                                  : undefined
+                              }
+                            >
+                              {row ? pct(row.over_rate) : "—"}
+                            </td>
+                          );
+                        })}
                       </tr>
                     ))}
-                </tbody>
-              </table>
-            </div>
-          ))}
-        </div>
-      </section>
+                    {group.againstMeasure &&
+                      linesFor(group.againstMeasure).length > 0 && (
+                        <>
+                          <tr className="bg-surface-raised">
+                            <td
+                              colSpan={4}
+                              className="px-4 py-2 text-xs uppercase tracking-widest text-muted"
+                            >
+                              Conceded
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className="px-4 py-2">Per match</td>
+                            {VENUES.map((v) => {
+                              const m = measureAt(group.againstMeasure!, v);
+                              return (
+                                <td
+                                  key={v}
+                                  className="tnum px-4 py-2 text-right font-medium"
+                                >
+                                  {m ? num(m.per_match) : "—"}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                          {linesFor(group.againstMeasure).map(({ line, byVenue }) => (
+                            <tr key={`against-${line}`}>
+                              <td className="px-4 py-2">
+                                Over <span className="text-muted">{line}</span>
+                              </td>
+                              {VENUES.map((v) => {
+                                const row = byVenue[v];
+                                return (
+                                  <td
+                                    key={v}
+                                    className={`tnum px-4 py-2 text-right ${heat(
+                                      row ? row.over_rate : null
+                                    )}`}
+                                    title={
+                                      row
+                                        ? `${row.over_count} of ${row.matches} matches`
+                                        : undefined
+                                    }
+                                  >
+                                    {row ? pct(row.over_rate) : "—"}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </>
+                      )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          );
+        })}
+      </div>
 
       {recent.length > 0 && (
         <section>

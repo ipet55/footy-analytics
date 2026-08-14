@@ -225,20 +225,36 @@ on conflict (match_id) do nothing
 """
 
 
-def build(conn: psycopg.Connection, rebuild: bool = False) -> tuple[int, int]:
-    """Populate the feature layer, refreshing the odds views it reads first.
+# Every materialized view derived from core, refreshed together here because
+# this runs after every load and nothing else does.
+#
+# The first two are read by this build: `market_p_*` comes from
+# core.market_1x2_mv, so building against a stale copy writes null market
+# probabilities and the backtest then reports the market as `nan` — a silence
+# that reads like "no odds exist" rather than "the view is behind". That is
+# exactly what happened when the Eredivisie, Liga Portugal and Süper Lig were
+# loaded with full Pinnacle coverage.
+#
+# The last three are not read by this build at all; they are what the team pages
+# serve. They are refreshed here because the alternative is a second command
+# somebody has to remember, and a stale team page is the same class of bug: it
+# would show a season as finished several matches early and look entirely
+# plausible doing it.
+MATERIALIZED = (
+    "core.market_1x2_mv",
+    "core.market_ou25_mv",
+    "public.team",
+    "public.team_season_measure",
+    "public.team_season_line",
+)
 
-    The refresh is not optional housekeeping. `market_p_*` comes from
-    `core.market_1x2_mv`, so a build that runs against a stale view writes null
-    market probabilities and the backtest then reports the market as `nan` — a
-    silence that reads like "no odds exist" rather than "the view is behind".
-    That is exactly what happened when the Eredivisie, Liga Portugal and Süper
-    Lig were loaded with full Pinnacle coverage.
-    """
+
+def build(conn: psycopg.Connection, rebuild: bool = False) -> tuple[int, int]:
+    """Populate the feature layer, refreshing every materialized view first."""
     with conn.cursor() as cur:
         cur.execute("set local statement_timeout = '20min'")
-        cur.execute("refresh materialized view core.market_1x2_mv")
-        cur.execute("refresh materialized view core.market_ou25_mv")
+        for view in MATERIALIZED:
+            cur.execute(f"refresh materialized view {view}")
         if rebuild:
             cur.execute("truncate features.team_match, features.match")
         cur.execute(TEAM_MATCH_SQL)

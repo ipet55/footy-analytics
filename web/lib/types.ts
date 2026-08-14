@@ -49,39 +49,49 @@ export type Market = {
   notes: string | null;
 };
 
-/** How often a team actually went over a line, counted from matches played.
- *  History, not prediction: it does not adjust for the opponent. */
-export type TeamSeasonSummary = {
+export type Venue = "overall" | "home" | "away";
+
+/** Per-match averages and the opponent comparison, split by venue. History
+ *  rather than prediction: it adjusts for nothing. */
+export type TeamSeasonMeasure = {
   team_id: number;
   team: string;
   competition_code: string;
   season: string;
   start_year: number;
   measure: string;
-  line: number;
+  venue: Venue;
   matches: number;
-  over_count: number;
-  over_rate: number;
-  mean_value: number;
+  total: number;
+  per_match: number;
+  points_per_game: number;
+  beat_opponent_rate: number | null;
 };
 
-export type TeamSeasonVenue = {
+/** How often a team went over a line, split by venue. */
+export type TeamSeasonLine = {
   team_id: number;
   team: string;
   competition_code: string;
   season: string;
-  venue: "home" | "away";
+  start_year: number;
+  measure: string;
+  venue: Venue;
+  line: number;
   matches: number;
-  goals_for: number;
-  goals_against: number;
-  corners_for: number;
-  corners_against: number;
-  shots_for: number;
-  cards: number;
-  fouls: number;
-  scored_rate: number;
-  conceded_rate: number;
-  points_per_game: number;
+  over_count: number;
+  over_rate: number;
+};
+
+export type Team = {
+  team_id: number;
+  team: string;
+  team_short: string;
+  country: string | null;
+  matches: number;
+  latest_season: string;
+  latest_start_year: number;
+  competitions: string[];
 };
 
 export type TeamForm = {
