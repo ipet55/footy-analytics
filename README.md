@@ -323,6 +323,50 @@ It is history and not prediction — it makes no adjustment for the opponent —
 both the view comments and the page say so, because it is the easiest number here
 to misread as a forecast.
 
+### Evidence, minutes and team sheets
+
+A match page used to be a table of probabilities with nothing beside it, while
+`core.match_team_stat` held between six and sixteen figures per team per match that
+nothing displayed. It now shows them, both sides on one row with the split drawn as
+a bar, because 16 shots against 10 says something 16 alone does not. A row the
+competition does not record is omitted rather than zeroed — showing a number
+against a blank invites the blank to be read as zero — which is why a Premier
+League match shows expected goals and no possession and a Champions League match
+the reverse.
+
+Two things had to be loaded. `core.match_event` holds the minute of every goal,
+card and substitution, and `core.match_lineup` with `core.match_lineup_player` holds
+the eleven, the bench, the formation and the coach. 34,052 events across 2,090
+matches, and 4,180 team sheets naming 88,523 players, kept current by
+`footy refresh`. The referee needed no loading at
+all: it has been on `core.match` since the FBref backfill, and it is the strongest
+single driver in the card models, sitting beside the card markets it explains.
+
+Minutes make the timing dashboards possible. Arsenal scored 67 league goals in
+2025/26 with 16 of them between 31 and 45 minutes, opened the scoring in 66% of
+their matches, and failed to score in 11%. An average first-goal minute of 38.9
+tells you far less than that distribution.
+
+Both were shaped by what the feed actually sends rather than what it should. The
+minute can be negative — a booking in the tunnel — so the constraint starts at -30
+and the bands fold anything below minute one into the first rather than clamping a
+pre-match card into the opening quarter hour. More seriously, extra time and penalty
+shootouts arrive as ordinary goal events: a qualifier recorded as 0-3 produced goals
+at 95 and 100 minutes, and since the last band is "76 and after", shootout kicks
+were landing there as late goals. That was 4.5% of Champions League goal events and
+would have made every knockout competition look like it scored heavily at the death.
+The timing views are regulation play only, and the timeline counts its own
+regulation goals and says so when they disagree with the result — because a page
+showing six goals above a 0-3 scoreline, unexplained, teaches a reader to distrust
+everything else on it.
+
+Player names on both tables are text beside a nullable `player_id`.
+`core.player.norm_name` is unique and these feeds bring in names from squads that
+were never loaded as entities, so requiring a resolved id would mean either dropping
+the data or inventing rows to hold it. Inventing entities to satisfy a display is
+how a player table fills with duplicates — which is a mistake this project has
+already made with clubs, twice.
+
 ## Shrinkage, found by looking at a page
 
 The Liga Portugal fixture list priced newly promoted Académico de Viseu at 89% to
@@ -484,6 +528,35 @@ several thousand elsewhere — so Bulgaria's 23.8% on per-team shots should be r
 as encouraging rather than believed. Fouls calibrate badly everywhere here, and
 cards carry nothing, which is consistent with cards needing referee variation the
 model can see.
+
+### Two clubs, one team, twenty-two times
+
+Barcelona held 115 Champions League appearances under one team id and 494 league
+matches under another. So did Sevilla, Tottenham, Inter, Villarreal, Marseille,
+Lyon and sixteen more: two identities per club, created months apart by the
+domestic loader and the UEFA loader. 815 matches sat detached from the record that
+explains them, so anything reading across competitions saw a club with no league
+history playing one with no European history and priced both as unknowns.
+
+It surfaced sideways. Linking Premier League fixtures to provider ids reached 210 of
+380 with every club aliased, which made no sense until the alias turned out to point
+at `Newcastle` while the fixtures belonged to `Newcastle United`.
+
+The lesson is about which detector to trust. Fuzzy name matching found 20 of the 22
+and produced 8 false positives at identical scores: Rangers scored a perfect 1.00
+against Queens Park Rangers, Arsenal Tula against Arsenal, Atlantas against
+Atalanta. The metric rewards one name being a subset of the other, which is fine for
+choosing among the twenty clubs in one league — the job it was written for — and
+unfit for deciding identity across four thousand. Merging on it would have handed
+QPR a European record.
+
+It also missed two that no threshold can reach: `Lyon` shares no token with
+`Olympique Lyonnais`, and `Stade Brestois 29` shares none with `Brest`. What found
+those was Ligue 1 linking 239 of 306 fixtures. So the check that stays is coverage,
+in `footy freshness`: every league must link 95% of its fixtures to provider ids. It
+would have caught all 22 without anyone thinking to look, and it does not care why
+two records disagree — only that a fixture found no partner, which is the actual
+symptom. The merge lists themselves stay hand-checked.
 
 None of it is publishable yet regardless, for the same reason the three
 football-data leagues are not: one verdict per market covers all competitions.

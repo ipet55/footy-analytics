@@ -211,6 +211,40 @@ def refresh_api_leagues(report: Report) -> None:
     report.add("api results", f"{matches} matches, {stats} stat rows")
 
 
+def link_provider_ids(report: Report) -> None:
+    """Attach provider fixture ids to results another source owns.
+
+    Needed before events, because a match with no provider id cannot have its
+    minutes or team sheet fetched — which is why the five leagues with closing odds
+    were the only ones with no timeline. Cheap: one request per competition, and the
+    insert skips what is already linked.
+    """
+    from footy.load import api_football as af_load
+
+    client = af.Client()
+    linked = unresolved = 0
+    with db.connect() as conn:
+        seasons = {c: current_season(conn, c) for c in af.LEAGUE_IDS}
+
+    for code, year in seasons.items():
+        try:
+            fixtures = af.fixtures(client, code, year)
+        except Exception as exc:
+            report.add("link ids", f"{code}: {str(exc)[:70]}", ok=False)
+            continue
+        with db.connect() as conn:
+            _, unmatched_clubs = af_load.alias_teams(conn, code, year, fixtures)
+            conn.commit()
+            n, _ = af_load.link_fixtures(conn, code, year, fixtures)
+            conn.commit()
+        linked += n
+        unresolved += len(unmatched_clubs)
+    detail = f"{linked} fixtures linked"
+    if unresolved:
+        detail += f", {unresolved} clubs unresolved"
+    report.add("link ids", detail)
+
+
 def refresh_events(report: Report, limit: int = 400) -> None:
     """Minutes and team sheets for matches that do not have them yet.
 
@@ -311,11 +345,16 @@ def refresh(days: int = 21, season: int | None = None) -> Report:
     Features before predictions, because the recalibration is derived by replaying
     the model over settled history. Settlement itself needs no step: ml.observation
     is a view over core, so a result becomes a settled outcome the moment it lands.
+
+    Provider ids before events, because a match with no id cannot have its minutes
+    fetched, and events before features, because the timing views are refreshed as
+    part of the feature build.
     """
     report = Report()
     refresh_results(report, season)
     refresh_calendars(report)
     refresh_api_leagues(report)
+    link_provider_ids(report)
     refresh_events(report)
     rebuild_features(report)
     repredict(report, days)

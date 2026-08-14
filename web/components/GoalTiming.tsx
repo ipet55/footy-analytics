@@ -31,9 +31,14 @@ export function GoalTiming({ rows }: { rows: TeamSeasonTiming[] }) {
     <section className="overflow-hidden rounded-lg border border-border bg-surface">
       <header className="border-b border-border px-4 py-3">
         <h2 className="text-sm font-medium">When goals happen</h2>
+        {/* The totals are stated because they do not match the goals table below,
+            and a reader who spots that without explanation will assume one of the
+            two is broken. Own goals belong to neither side's timing and extra time
+            is not comparable with regulation, so both are left out here. */}
         <p className="mt-0.5 text-xs text-muted">
-          {totalFor} scored and {totalAgainst} conceded, by fifteen-minute band.
-          Added time counts in the band its minute falls in.
+          {totalFor} scored and {totalAgainst} conceded in regulation, by
+          fifteen-minute band. Added time counts in the band its minute falls in;
+          own goals and extra time are excluded.
         </p>
       </header>
       <div className="px-4 py-4">
