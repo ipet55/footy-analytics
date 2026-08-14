@@ -23,7 +23,7 @@ export default async function Home({
       : q;
   };
 
-  const [upcoming, played] = await Promise.all([
+  const [upcoming, played, servedRes] = await Promise.all([
     scoped()
       .is("home_goals_ft", null)
       .order("kickoff_date", { ascending: true })
@@ -32,6 +32,10 @@ export default async function Home({
       .not("home_goals_ft", "is", null)
       .order("kickoff_date", { ascending: false })
       .limit(200),
+    // Which competitions publish anything. Eight are loaded and measured but
+    // publish nothing yet, so a chip list taken from the label map would offer
+    // five filters that lead to an empty page.
+    supabase.from("market").select("competition_code"),
   ]);
 
   const error = upcoming.error ?? played.error;
@@ -45,6 +49,17 @@ export default async function Home({
 
   const fixtures = (upcoming.data ?? []) as Fixture[];
   const results = (played.data ?? []) as Fixture[];
+
+  const served = [
+    ...new Set(
+      ((servedRes.data ?? []) as Array<{ competition_code: string }>).map(
+        (m) => m.competition_code
+      )
+    ),
+  ].sort(
+    (a, b) =>
+      Object.keys(COMPETITIONS).indexOf(a) - Object.keys(COMPETITIONS).indexOf(b)
+  );
 
   return (
     <div className="space-y-6">
@@ -60,12 +75,12 @@ export default async function Home({
 
       <nav className="flex flex-wrap gap-2">
         <FilterChip active={!competition} href="/" label="All leagues" />
-        {Object.entries(COMPETITIONS).map(([code, name]) => (
+        {served.map((code) => (
           <FilterChip
             key={code}
             active={competition === code}
             href={`/?competition=${encodeURIComponent(code)}`}
-            label={name}
+            label={COMPETITIONS[code] ?? code}
           />
         ))}
       </nav>

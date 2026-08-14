@@ -266,6 +266,27 @@ statistic. A promoted club was being priced at one foul a match instead of ten,
 and the over probability underflowed hard enough to violate its own check
 constraint. Both models now default to the mean of their fitted parameters.
 
+## What the app serves
+
+Nine of the fourteen competitions publish something, and they do not publish the
+same things. Publication is decided per competition in `ml.market_competition`
+and enforced by the views, so England shows eleven markets and Portugal shows six
+— Portugal withholds per-team corners and shots despite having the largest gains
+anywhere, because its reliability buckets are 9.7% and 9.3%. Absence means no: a
+competition with no row publishes nothing rather than inheriting a verdict earned
+on other data, which is asserted in `tests/test_public_surface.py`.
+
+Bulgaria, the Czech league, Eliteserien and the two UEFA competitions are loaded
+and measured but publish nothing yet.
+
+Alongside the predictions there is now a team page carrying the opposite kind of
+number: counts of what happened in the matches a team played, per season and per
+competition, from `public.team_season_summary`. Arsenal went over 0.5 goals in 92%
+of their 2025/26 league games and 93% of their Champions League ones. It is
+history and not prediction — it makes no adjustment for the opponent — and both
+the view comment and the page say so, because it is the easiest number here to
+misread as a forecast.
+
 ## Does it beat the bookmaker?
 
 No, and now that is measured in nine leagues rather than one. Walk-forward 1X2
