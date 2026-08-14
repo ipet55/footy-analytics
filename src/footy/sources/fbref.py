@@ -34,11 +34,28 @@ LEAGUE_KEYS = {
     "GER-BL": "GER-Bundesliga",
     "ITA-SA": "ITA-Serie A",
     "FRA-L1": "FRA-Ligue 1",
+    # Not in soccerdata's built-in list. These resolve through the custom league
+    # dict this project writes, and the FBref names in it are exact matches
+    # against FBref's own table of 158 competitions — "Champions League" and
+    # "Bulgarian First League" both return nothing, the latter because it does
+    # not exist.
+    "CZE-1L": "CZE-First League",
+    "NOR-EL": "NOR-Eliteserien",
 }
 
+# Competitions whose season is one calendar year rather than two.
+SINGLE_YEAR_SEASONS = frozenset({"NOR-EL"})
 
-def season_label(start_year: int) -> str:
-    """2024 -> '2425', the label FBref uses for the 2024-25 season."""
+
+def season_label(start_year: int, competition_code: str | None = None) -> str:
+    """2024 -> '2425', the label FBref uses for the 2024-25 season.
+
+    Eliteserien runs March to December, so FBref labels it by the single year it
+    was played in. Passing the competition is optional only so the existing
+    callers, all of which are two-year leagues, keep working unchanged.
+    """
+    if competition_code in SINGLE_YEAR_SEASONS:
+        return str(start_year)
     return f"{start_year % 100:02d}{(start_year + 1) % 100:02d}"
 
 
@@ -99,7 +116,8 @@ def reader(competition_code: str, start_year: int):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         return sd.FBref(
-            leagues=LEAGUE_KEYS[competition_code], seasons=[season_label(start_year)]
+            leagues=LEAGUE_KEYS[competition_code],
+            seasons=[season_label(start_year, competition_code)],
         )
 
 
@@ -134,6 +152,183 @@ def schedule(fb) -> list[ScheduledMatch]:
             )
         )
     return out
+
+
+@dataclass(frozen=True)
+class Result:
+    """A played match, as FBref's schedule reports it.
+
+    `stage` comes from FBref's own round label rather than being inferred. That
+    is a real improvement on the football-data.co.uk path, where the phase has to
+    be deduced from repeated pairings: the Czech league runs six named rounds and
+    FBref names all of them.
+    """
+
+    kickoff_date: date
+    home_name: str
+    away_name: str
+    home_goals: int
+    away_goals: int
+    stage: str
+    referee: str | None = None
+    venue: str | None = None
+
+
+@dataclass(frozen=True)
+class TeamMatchStat:
+    """One side's counting stats for one match.
+
+    Identified by date, opponent and whether it was at home, because the team
+    name itself is unusable: soccerdata leaves the `team` and `league` index
+    levels empty for leagues outside its built-in list, which is every league
+    read through this path. Date plus opponent plus venue picks out the same
+    fixture and is populated.
+
+    No corners. FBref's per-match team endpoint exposes schedule, shooting,
+    keeper and misc, and corner kicks are in none of them.
+    """
+
+    kickoff_date: date
+    opponent_name: str
+    is_home: bool
+    goals: int | None = None
+    shots: int | None = None
+    shots_on_target: int | None = None
+    fouls_committed: int | None = None
+    fouls_drawn: int | None = None
+    yellow_cards: int | None = None
+    red_cards: int | None = None
+    offsides: int | None = None
+    crosses: int | None = None
+    interceptions: int | None = None
+
+
+# Stat endpoint and flattened column -> our column name.
+TEAM_STAT_MAP = {
+    ("shooting", "Standard/Sh"): "shots",
+    ("shooting", "Standard/SoT"): "shots_on_target",
+    ("misc", "Performance/Fls"): "fouls_committed",
+    ("misc", "Performance/Fld"): "fouls_drawn",
+    ("misc", "Performance/CrdY"): "yellow_cards",
+    ("misc", "Performance/CrdR"): "red_cards",
+    ("misc", "Performance/Off"): "offsides",
+    ("misc", "Performance/Crs"): "crosses",
+    ("misc", "Performance/Int"): "interceptions",
+}
+
+# FBref round labels that mean "the round-robin part of the season". Everything
+# else in a domestic competition is a phase that follows it, and is stored as
+# such so a pairing can occur twice.
+REGULAR_ROUNDS = frozenset({"Regular season", "Regular Season", ""})
+
+
+def _score(value) -> tuple[int, int] | None:
+    """FBref writes a score as '2–1', with an en dash, and leaves it blank for
+    anything unplayed."""
+    text = _text(value)
+    if not text:
+        return None
+    for dash in ("\u2013", "-"):
+        if dash in text:
+            home, _, away = text.partition(dash)
+            try:
+                return int(home.strip()), int(away.strip())
+            except ValueError:
+                return None
+    return None
+
+
+def _count(value) -> int | None:
+    """An integer from a match-log cell.
+
+    Goals in a knockout tie are written '1 (3)', the bracket being the shootout.
+    The shootout is not a goal and the bracket is dropped. Plain `_as_int` raises
+    on these, which is how they were found: they only appear in the European
+    fixtures that arrive mixed in with the league ones.
+    """
+    if value is None or (not isinstance(value, str) and pd.isna(value)):
+        return None
+    if isinstance(value, str):
+        value = value.split("(")[0].strip()
+        if not value:
+            return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def results(fb) -> list[Result]:
+    """Every played match of the season, with its score and phase."""
+    df = fb.read_schedule().reset_index()
+    has_referee = "referee" in df.columns
+    out = []
+    for row in df.itertuples():
+        goals = _score(getattr(row, "score", None))
+        if goals is None or pd.isna(row.date):
+            continue
+        home, away = str(row.home_team).strip(), str(row.away_team).strip()
+        if not home or not away or "nan" in (home, away):
+            continue
+        rnd = _text(getattr(row, "round", None)) or ""
+        referee = getattr(row, "referee", None) if has_referee else None
+        out.append(
+            Result(
+                kickoff_date=row.date.date(),
+                home_name=home,
+                away_name=away,
+                home_goals=goals[0],
+                away_goals=goals[1],
+                stage="regular" if rnd in REGULAR_ROUNDS else rnd,
+                referee=_text(referee),
+                venue=_text(getattr(row, "venue", None)),
+            )
+        )
+    return out
+
+
+def team_stats(fb) -> list[TeamMatchStat]:
+    """Per-team counting stats for the season, from the bulk match-log endpoint.
+
+    Two requests per team-season rather than one per match, which is the only
+    reason a twelve-season backfill is hours rather than days.
+
+    The rows returned cover every competition a club played in, so European
+    fixtures arrive alongside league ones. They are not filtered here — the
+    loader drops whatever does not match a league fixture, and the discards are
+    worth keeping in mind, being exactly the continental matches the congestion
+    features have never had.
+    """
+    frames = {}
+    for stat_type in ("shooting", "misc"):
+        df = fb.read_team_match_stats(stat_type=stat_type).reset_index()
+        df.columns = [
+            "/".join(str(x) for x in c if x and not str(x).startswith("Unnamed"))
+            if isinstance(c, tuple)
+            else str(c)
+            for c in df.columns
+        ]
+        frames[stat_type] = df
+
+    # to_dict keeps the flattened column names exactly; itertuples would mangle
+    # the slash in 'Standard/Sh' and silently read nothing.
+    merged: dict[tuple, dict] = {}
+    for stat_type, df in frames.items():
+        for values in df.to_dict("records"):
+            day, opponent = values.get("date"), _text(values.get("opponent"))
+            venue = _text(values.get("venue"))
+            if day is None or pd.isna(day) or not opponent or venue not in ("Home", "Away"):
+                continue
+            key = (day.date(), opponent, venue == "Home")
+            entry = merged.setdefault(
+                key,
+                {"kickoff_date": key[0], "opponent_name": opponent, "is_home": key[2],
+                 "goals": _count(values.get("GF"))},
+            )
+            for (source, column), target in TEAM_STAT_MAP.items():
+                if source == stat_type and column in values:
+                    entry[target] = _count(values[column])
+    return [TeamMatchStat(**v) for v in merged.values()]
 
 
 @dataclass(frozen=True)
