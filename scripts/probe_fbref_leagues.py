@@ -20,18 +20,22 @@ from pathlib import Path
 
 CONFIG = Path.home() / "soccerdata" / "config" / "league_dict.json"
 
-# FBref's own competition names. Guesses for the ones we have never touched,
-# which is the point of probing rather than assuming.
+# FBref's own competition names, as they appear in its list of 158 competitions.
+# Verified rather than guessed: the first run of this script guessed "Champions
+# League" and "Bulgarian First League" and both returned nothing, because
+# soccerdata matches this string exactly against FBref's competition table.
+#
+# Bulgaria is deliberately absent. There is no Bulgarian competition on FBref at
+# all, and none on football-data.co.uk either, so the efbet League has no free
+# source in this stack and no name to put here.
 CANDIDATES = {
-    "BUL-First League": {"FBref": "Bulgarian First League", "season_start": "Jul",
-                         "season_end": "May"},
     "CZE-First League": {"FBref": "Czech First League", "season_start": "Jul",
                          "season_end": "May"},
     "NOR-Eliteserien": {"FBref": "Eliteserien", "season_start": "Mar",
                         "season_end": "Dec", "season_code": "single-year"},
-    "INT-Champions League": {"FBref": "Champions League", "season_start": "Sep",
+    "INT-Champions League": {"FBref": "UEFA Champions League", "season_start": "Sep",
                              "season_end": "May"},
-    "INT-Europa League": {"FBref": "Europa League", "season_start": "Sep",
+    "INT-Europa League": {"FBref": "UEFA Europa League", "season_start": "Sep",
                           "season_end": "May"},
     "BEL-Pro League": {"FBref": "Belgian Pro League", "season_start": "Jul",
                        "season_end": "May"},
