@@ -303,12 +303,12 @@ def store_fixtures(
             """
             insert into core.match (
                 competition_id, season_id, kickoff_date, status,
-                home_team_id, away_team_id, matchday, venue_name
+                home_team_id, away_team_id, matchday, venue_name, stage
             )
             select competition_id, season_id, kickoff_date, 'scheduled',
-                   home_team_id, away_team_id, matchday, venue
+                   home_team_id, away_team_id, matchday, venue, 'regular'
               from _fb_resolved
-            on conflict (season_id, home_team_id, away_team_id) do update
+            on conflict (season_id, home_team_id, away_team_id, stage) do update
                 set kickoff_date = excluded.kickoff_date,
                     matchday     = coalesce(excluded.matchday, core.match.matchday),
                     venue_name   = coalesce(excluded.venue_name, core.match.venue_name),

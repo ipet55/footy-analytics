@@ -281,7 +281,7 @@ log-loss from 2022/23, against de-vigged closing odds:
 | Italy | 1.08688 | 0.98773 | **0.96864** | 84% |
 | Germany | 1.07387 | 0.99480 | **0.96986** | 76% |
 | France | 1.07107 | 0.99963 | **0.97810** | 77% |
-| Belgium | 1.06355 | 0.97756 | **0.97079** | 93% |
+| Belgium | 1.07532 | 1.00636 | **0.98833** | 79% |
 
 The market wins everywhere. What the model does reliably is close 71–93% of the
 distance between a naive base rate and what the bookmaker knows, and it does that
@@ -326,16 +326,61 @@ Cards coming out at roughly zero in all three is a useful confirmation rather
 than a disappointment: none of these leagues has referees loaded yet, and the
 referee term is what carries cards where it carries them at all.
 
-The Belgian Pro League is loaded to 2022/23 and stops there. From 2023/24 its
-playoff format replays 72 pairings a season, and `core.match` is keyed on one
-meeting per pairing per season. That key also blocks cup and European ties, so it
-is one fix rather than three — and it is the prerequisite for the Champions and
-Europa Leagues, which additionally need a cross-league rating because attack and
-defence are centred within a competition and cannot be compared across two.
+### Belgium, and the two-phase format
 
-Eliteserien publishes results and closing odds only, with no shots, corners,
-fouls or cards, so it would support the goals markets alone. The Czech and
-Bulgarian top flights are not on football-data.co.uk in any file.
+Belgium is now loaded in full, 3,285 matches. It used to stop at 2022/23 because
+from 2023/24 the league plays a 240-match double round robin and then splits into
+championship, Europa and relegation playoffs in which all sixteen clubs meet
+opponents they have already played. Seventy-two pairings a season collided with a
+natural key that assumed one meeting per pairing.
+
+`core.match.stage` is the fix, and it is a widening rather than a change: every
+existing row is `regular`, so nothing already stored moved. The phase is inferred
+from the fixture list rather than declared by the source, on the rule that a
+double round robin gives each ordered pair exactly one meeting, so a second
+meeting is a second phase. Two independent checks say the rule reads the format
+rather than a coincidence — the regular phase is a perfect 240-match round robin
+in each affected season, and no regular fixture falls after the first playoff
+one. Run across all nine leagues it marks Belgium's 215 playoff matches and
+nothing else.
+
+**Modelling the phases separately was measured and rejected.** The obvious design
+is one model for the regular season and another for the playoff, and the data
+does not support it. Comparing each club against itself across 48 team-seasons,
+no statistic differs by more than about two standard errors — goals, corners,
+fouls, cards and shots are all indistinguishable between phases. Walk-forward,
+the model predicts playoff matches 0.028 of log-loss worse, which is 1.0 standard
+error, so no difference is detectable at all. A separate fit would also be
+starved: 215 playoff matches cannot support the 32 team parameters it would need.
+One fit over both phases is the right answer, and the value of `stage` is that it
+lets the fixtures be *stored*, which was the actual blocker.
+
+Adding the missing seasons moved Belgium's own numbers. It previously appeared to
+close 93% of the market gap, the best of any league; over the full history it
+closes 79%, in line with everywhere else. The old figure was measured on a
+truncated, easier period, which is a fair warning about reading one league's
+number in isolation.
+
+### Where the remaining competitions would come from
+
+FBref lists 158 competitions and covers the Czech First League, Eliteserien, the
+UEFA Champions League and the UEFA Europa League — under those exact names, which
+is worth stating because none of the obvious guesses matched. **Bulgaria is not
+among them.** It is absent from football-data.co.uk too, so the efbet League needs
+either a paid feed or a Sofascore scrape; there is no free, reliable source in the
+stack today.
+
+Eliteserien is on football-data.co.uk as well, but with results and closing odds
+only and no shots, corners, fouls or cards, so from that source it supports the
+goals markets alone.
+
+The Champions and Europa Leagues remain a modelling problem rather than a loading
+one. Attack and defence are centred within a competition, so an English rating and
+a German rating are not on a common scale and the model cannot price Arsenal
+against Bayern at all. That needs a cross-league rating, and ClubElo — already
+loaded, 250k rating periods — is the obvious candidate. The `stage` column is a
+prerequisite that is now in place, since a group stage and a knockout round can
+pair the same clubs twice.
 
 ## Sources
 

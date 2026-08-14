@@ -137,7 +137,34 @@ def parse_season(csv_file: CsvFile) -> ParsedSeason:
         out.team_stats.extend(_team_stat_rows(row, row_id, hg, ag))
         out.odds.extend(_odds_rows(row, row_id, columns))
 
+    _assign_stages(out)
     return out
+
+
+def _assign_stages(season: ParsedSeason) -> None:
+    """Mark the matches that belong to a phase after the round-robin season.
+
+    A league season is a double round robin, so an ordered pair meets exactly
+    once: Anderlecht at home to Genk happens one time. A second meeting therefore
+    means the season did not end where a round robin would, and the only formats
+    that do that are the split ones — Belgium since 2023/24, and Bulgaria in the
+    same shape.
+
+    That makes the rule safe to run everywhere. In a league that does not split,
+    no pair ever repeats and nothing is marked. Checked against all nine loaded
+    leagues, where it marks Belgium's 72 playoff matches a season and nothing
+    else.
+
+    Date order matters, and the CSV is not reliably in it, so the ordering is
+    imposed here. The alternative rule — everything after the last round-robin
+    date — gives the identical answer on every Belgian season, which is the
+    reassurance that this is reading the format rather than a coincidence.
+    """
+    seen: set[tuple[str, str]] = set()
+    for match in sorted(season.matches, key=lambda m: (m["kickoff_date"], m["row_id"])):
+        pair = (match["home_name"], match["away_name"])
+        match["stage"] = "playoff" if pair in seen else "regular"
+        seen.add(pair)
 
 
 def _team_stat_rows(row: pd.Series, row_id: int, hg: int, ag: int) -> list[dict]:

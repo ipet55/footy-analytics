@@ -32,6 +32,7 @@ MATCH_COLUMNS = [
     "away_goals_ht",
     "referee_name",
     "source_match_id",
+    "stage",
 ]
 
 ODDS_COLUMNS = ["row_id", "bookmaker", "market", "outcome", "line", "price", "snapshot"]
@@ -137,7 +138,8 @@ def _stage_season(conn: psycopg.Connection, season: ParsedSeason) -> None:
             home_goals_ht    smallint,
             away_goals_ht    smallint,
             referee_name     text,
-            source_match_id  text
+            source_match_id  text,
+            stage            text
         )
         """,
     )
@@ -243,15 +245,16 @@ def load_season(conn: psycopg.Connection, season: ParsedSeason) -> LoadResult:
             insert into core.match (
                 competition_id, season_id, kickoff_date, kickoff_utc, status,
                 home_team_id, away_team_id,
-                home_goals_ft, away_goals_ft, home_goals_ht, away_goals_ht, referee_id
+                home_goals_ft, away_goals_ft, home_goals_ht, away_goals_ht, referee_id,
+                stage
             )
             select r.competition_id, r.season_id, s.kickoff_date, s.kickoff_utc, 'finished',
                    r.home_team_id, r.away_team_id,
                    s.home_goals_ft, s.away_goals_ft, s.home_goals_ht, s.away_goals_ht,
-                   r.referee_id
+                   r.referee_id, s.stage
               from _stage_match s
               join _resolved r on r.row_id = s.row_id
-            on conflict (season_id, home_team_id, away_team_id) do update
+            on conflict (season_id, home_team_id, away_team_id, stage) do update
                 set kickoff_date  = excluded.kickoff_date,
                     kickoff_utc   = coalesce(excluded.kickoff_utc, core.match.kickoff_utc),
                     status        = excluded.status,
@@ -269,9 +272,11 @@ def load_season(conn: psycopg.Connection, season: ParsedSeason) -> LoadResult:
             create temporary table _match_map as
             select r.row_id, m.match_id
               from _resolved r
+              join _stage_match s on s.row_id = r.row_id
               join core.match m on m.season_id = r.season_id
                                and m.home_team_id = r.home_team_id
                                and m.away_team_id = r.away_team_id
+                               and m.stage = s.stage
             """
         )
 
