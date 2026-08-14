@@ -50,27 +50,34 @@ export default async function Home({
   const fixtures = (upcoming.data ?? []) as Fixture[];
   const results = (played.data ?? []) as Fixture[];
 
-  // The match-result probabilities for everything on the page. Without them an
+  // The match-result probabilities for the upcoming fixtures. Without them an
   // upcoming fixture ends in a dash — the empty score column — which reads as
-  // "no prediction" when there are fifty of them one click away.
-  const shown = [...fixtures, ...results].map((f) => f.match_id);
-  const oddsRes = shown.length
-    ? await supabase
-        .from("prediction")
-        .select("match_id,selection,probability")
-        .eq("market_code", "goals_1x2")
-        .in("match_id", shown)
-    : { data: [] };
-
+  // "no prediction" when there are fifty of them one click away. A played match
+  // shows its score instead and needs none of this.
+  //
+  // Requested in batches because PostgREST caps a response at 1000 rows and says
+  // nothing when it truncates: asking about 400 matches returned three
+  // probabilities each for the first 333 and silence for the rest, so most of the
+  // page read "not priced" while the database held every number. Three rows per
+  // match means 300 matches is the largest batch that cannot be cut short.
   const outcome = new Map<number, Record<string, number>>();
-  for (const row of (oddsRes.data ?? []) as Array<{
-    match_id: number;
-    selection: string;
-    probability: number;
-  }>) {
-    const entry = outcome.get(row.match_id) ?? {};
-    entry[row.selection] = Number(row.probability);
-    outcome.set(row.match_id, entry);
+  const BATCH = 300;
+  for (let i = 0; i < fixtures.length; i += BATCH) {
+    const ids = fixtures.slice(i, i + BATCH).map((f) => f.match_id);
+    const { data } = await supabase
+      .from("prediction")
+      .select("match_id,selection,probability")
+      .eq("market_code", "goals_1x2")
+      .in("match_id", ids);
+    for (const row of (data ?? []) as Array<{
+      match_id: number;
+      selection: string;
+      probability: number;
+    }>) {
+      const entry = outcome.get(row.match_id) ?? {};
+      entry[row.selection] = Number(row.probability);
+      outcome.set(row.match_id, entry);
+    }
   }
 
   const served = [
