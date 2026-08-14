@@ -17,6 +17,9 @@ export type Fixture = {
   away_goals_ft: number | null;
   venue_name: string | null;
   has_predictions: boolean;
+  /** Known for about two thirds of played matches. The strongest single driver in
+   *  the card models, and worth showing beside them for that reason. */
+  referee: string | null;
 };
 
 export type Prediction = {
@@ -113,6 +116,21 @@ export type MatchStat = {
   away_saves: number | null;
   home_xg: number | null;
   away_xg: number | null;
+};
+
+export type MatchLineup = {
+  match_id: number;
+  team_id: number;
+  team: string;
+  is_home: boolean;
+  formation: string | null;
+  coach_name: string | null;
+  player_name: string;
+  shirt_number: number | null;
+  /** The feed's letter — G, D, M, F — not a coordinate. Null in about one sheet
+   *  in twelve, in which case the eleven is listed without lines. */
+  position: string | null;
+  is_starter: boolean;
 };
 
 export type MatchEvent = {

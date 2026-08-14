@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { MarketCard } from "@/components/MarketCard";
+import { Lineups } from "@/components/Lineups";
 import { StatBar } from "@/components/StatBar";
 import { Timeline } from "@/components/Timeline";
 import { formatDateLong } from "@/lib/format";
@@ -12,6 +13,7 @@ import {
   type Market,
   type MarketPrice,
   type MatchEvent,
+  type MatchLineup,
   type MatchStat,
   type Prediction,
   type TeamForm,
@@ -72,7 +74,8 @@ export default async function MatchPage({
   if (!Number.isFinite(matchId)) notFound();
 
   const [
-    fixtureRes, predictionRes, priceRes, formRes, h2hRes, marketRes, statRes, eventRes,
+    fixtureRes, predictionRes, priceRes, formRes, h2hRes, marketRes, statRes,
+    eventRes, lineupRes,
   ] = await Promise.all([
       supabase.from("fixture").select("*").eq("match_id", matchId).maybeSingle(),
       supabase.from("prediction").select("*").eq("match_id", matchId),
@@ -82,6 +85,7 @@ export default async function MatchPage({
       supabase.from("market").select("market_code,label"),
       supabase.from("match_stat").select("*").eq("match_id", matchId).maybeSingle(),
       supabase.from("match_event").select("*").eq("match_id", matchId),
+      supabase.from("match_lineup").select("*").eq("match_id", matchId),
     ]);
 
   const fixture = fixtureRes.data as Fixture | null;
@@ -93,6 +97,7 @@ export default async function MatchPage({
   const h2h = h2hRes.data as HeadToHead | null;
   const stat = statRes.data as MatchStat | null;
   const events = (eventRes.data ?? []) as MatchEvent[];
+  const lineups = (lineupRes.data ?? []) as MatchLineup[];
 
   const home = forms.find((f) => f.is_home);
   const away = forms.find((f) => !f.is_home);
@@ -139,6 +144,7 @@ export default async function MatchPage({
         <p className="mt-2 text-sm text-muted">
           {formatDateLong(fixture.kickoff_date)}
           {fixture.venue_name ? ` · ${fixture.venue_name}` : ""}
+          {fixture.referee ? ` · Referee ${fixture.referee}` : ""}
         </p>
         <p className="mt-3 text-sm">
           <span className="text-muted">Season history: </span>
@@ -161,6 +167,12 @@ export default async function MatchPage({
           </Link>
         </p>
       </header>
+
+      <Lineups
+        rows={lineups}
+        homeTeam={fixture.home_team}
+        awayTeam={fixture.away_team}
+      />
 
       <Timeline
         events={events}

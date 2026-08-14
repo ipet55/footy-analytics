@@ -407,13 +407,15 @@ def store_events(
 def store_lineups(
     conn: psycopg.Connection, match_ids: dict[int, int], lineups: Iterable
 ) -> int:
-    """Formation and coach per team per match.
+    """Team sheets: formation and coach, plus the eleven and the bench.
 
-    The named players are deliberately not written to core.appearance here.
-    core.player.norm_name is unique, so loading squads from leagues that have never
-    had players loaded would either collide or invent rows, and a team sheet is
-    useful on the page without every player existing as an entity first.
+    Written to core.match_lineup and core.match_lineup_player rather than
+    core.appearance, because core.player.norm_name is unique and squads from newly
+    covered leagues cannot all be resolved to existing players. core.appearance
+    remains what it was — who played and what they did, for the leagues whose
+    players are loaded as entities.
     """
+    lineups = list(lineups)
     rows = [
         [match_ids[lu.fixture_id], str(lu.team_id), lu.formation, lu.coach_name]
         for lu in lineups
@@ -453,6 +455,56 @@ def store_lineups(
         )
         written = cur.rowcount
         cur.execute("drop table _af_lineup")
+
+        named = [
+            [match_ids[lu.fixture_id], str(lu.team_id), name, number, position, started]
+            for lu in lineups
+            if lu.fixture_id in match_ids
+            for name, number, position, started in lu.players
+        ]
+        if named:
+            db.copy_into_temp(
+                conn,
+                "_af_named",
+                ["match_id", "source_team_id", "player_name", "shirt_number",
+                 "position", "is_starter"],
+                named,
+                """
+                create temporary table _af_named (
+                    match_id bigint, source_team_id text, player_name text,
+                    shirt_number smallint, position text, is_starter boolean
+                )
+                """,
+            )
+            cur.execute(
+                """
+                insert into core.match_lineup_player (
+                    match_id, team_id, player_name, shirt_number, position,
+                    is_starter, player_id
+                )
+                select distinct on (p.match_id, ta.team_id, p.player_name)
+                       p.match_id, ta.team_id, p.player_name, p.shirt_number,
+                       p.position, p.is_starter,
+                       (select pl.player_id from core.player pl
+                         where pl.norm_name = core.norm_name(p.player_name))
+                  from _af_named p
+                  join core.source src on src.code = %s
+                  join core.team_alias ta on ta.source_id = src.source_id
+                                         and ta.source_team_id = p.source_team_id
+                  -- Only for sheets that were stored above; a player without a
+                  -- lineup row would violate the composite foreign key.
+                  join core.match_lineup ml on ml.match_id = p.match_id
+                                           and ml.team_id = ta.team_id
+                 order by p.match_id, ta.team_id, p.player_name, p.is_starter desc
+                on conflict (match_id, team_id, player_name) do update
+                    set shirt_number = excluded.shirt_number,
+                        position     = excluded.position,
+                        is_starter   = excluded.is_starter,
+                        updated_at   = now()
+                """,
+                (SOURCE_CODE,),
+            )
+            cur.execute("drop table _af_named")
     return written
 
 

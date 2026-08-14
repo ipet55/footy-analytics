@@ -34,7 +34,8 @@ VIEWS = (
     "team", "team_season_measure", "team_season_line",
     # What happened in a played match, and when. Results, already public
     # everywhere, with no model output in them.
-    "match_stat", "match_event", "team_season_timing", "team_season_first",
+    "match_stat", "match_event", "match_lineup",
+    "team_season_timing", "team_season_first",
 )
 
 
