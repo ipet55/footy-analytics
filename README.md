@@ -361,6 +361,46 @@ closes 79%, in line with everywhere else. The old figure was measured on a
 truncated, easier period, which is a fair warning about reading one league's
 number in isolation.
 
+### Five more from API-Football
+
+Fourteen competitions are now loaded, 49,524 played matches. Bulgaria, the Czech
+league, Eliteserien and both UEFA club competitions come from API-Football, the
+first paid source here, bought because neither free source could cover them:
+football-data.co.uk does not publish any of the five, and FBref publishes them
+but exposes no corner count per match.
+
+It gives more per match than football-data.co.uk does for the original nine —
+corners plus possession, passes, shots split inside and outside the box, and
+expected goals. It gives no usable odds at all: prices live for seven days with
+no archive, so these five can never be scored against a closing line. Whether the
+model beats a bookmaker is unanswerable for them, permanently.
+
+Statistic coverage is uneven and the provider's own season-level flag does not
+predict it — that flag means "some fixture here has statistics", not all of them.
+Measured: Norway 100%, Czech 85%, Champions League 81%, Bulgaria 76%, Europa
+League 67%, the last dragged down by qualifying rounds. Goals are unaffected
+everywhere, coming from the fixture record.
+
+Walk-forward from 2022/23, against a rolling benchmark:
+
+| | Bulgaria | Czech | Norway |
+|---|---|---|---|
+| 1X2, gain over base rate | 9.5% | 9.7% | 6.7% |
+| Shots, per team | 23.8%, cal 8.2% | 11.0%, cal 9.7% | 10.6%, cal 6.8% |
+| Corners, home | 8.1%, cal 5.8% | 3.5%, cal 9.8% | 5.9%, cal 4.9% |
+| Fouls, match total | 1.0%, cal 17.9% | 2.6%, cal 9.2% | 6.6%, cal 12.3% |
+| Cards, match total | -0.2% | 4.0% | insufficient data |
+
+The goals model transfers cleanly to all three. The count markets are noisier than
+in the established leagues and the samples are small — 315 to 704 matches against
+several thousand elsewhere — so Bulgaria's 23.8% on per-team shots should be read
+as encouraging rather than believed. Fouls calibrate badly everywhere here, and
+cards carry nothing, which is consistent with cards needing referee variation the
+model can see.
+
+None of it is publishable yet regardless, for the same reason the three
+football-data leagues are not: one verdict per market covers all competitions.
+
 ### Where the remaining competitions would come from
 
 FBref lists 158 competitions and covers the Czech First League, Eliteserien, the
