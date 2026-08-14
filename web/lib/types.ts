@@ -83,6 +83,38 @@ export type TeamSeasonLine = {
   over_rate: number;
 };
 
+/** What happened in a played match, both sides on one row. Columns are null where
+ *  the competition has no such data — never zero. */
+export type MatchStat = {
+  match_id: number;
+  home_shots: number | null;
+  away_shots: number | null;
+  home_shots_on_target: number | null;
+  away_shots_on_target: number | null;
+  home_shots_inside_box: number | null;
+  away_shots_inside_box: number | null;
+  home_corners: number | null;
+  away_corners: number | null;
+  home_fouls: number | null;
+  away_fouls: number | null;
+  home_yellows: number | null;
+  away_yellows: number | null;
+  home_reds: number | null;
+  away_reds: number | null;
+  home_offsides: number | null;
+  away_offsides: number | null;
+  home_possession: number | null;
+  away_possession: number | null;
+  home_passes: number | null;
+  away_passes: number | null;
+  home_passes_accurate: number | null;
+  away_passes_accurate: number | null;
+  home_saves: number | null;
+  away_saves: number | null;
+  home_xg: number | null;
+  away_xg: number | null;
+};
+
 export type Team = {
   team_id: number;
   team: string;

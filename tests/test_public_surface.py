@@ -32,6 +32,8 @@ VIEWS = (
     # contain no model output at all, only results that are already public.
     # Materialized, so they appear as relkind 'm' rather than 'v'.
     "team", "team_season_measure", "team_season_line",
+    # What happened in a played match. Results, already public everywhere.
+    "match_stat",
 )
 
 

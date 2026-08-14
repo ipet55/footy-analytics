@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { MarketCard } from "@/components/MarketCard";
+import { StatBar } from "@/components/StatBar";
 import { formatDateLong } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
 import {
@@ -9,6 +10,7 @@ import {
   type HeadToHead,
   type Market,
   type MarketPrice,
+  type MatchStat,
   type Prediction,
   type TeamForm,
 } from "@/lib/types";
@@ -67,7 +69,7 @@ export default async function MatchPage({
   const matchId = Number(id);
   if (!Number.isFinite(matchId)) notFound();
 
-  const [fixtureRes, predictionRes, priceRes, formRes, h2hRes, marketRes] =
+  const [fixtureRes, predictionRes, priceRes, formRes, h2hRes, marketRes, statRes] =
     await Promise.all([
       supabase.from("fixture").select("*").eq("match_id", matchId).maybeSingle(),
       supabase.from("prediction").select("*").eq("match_id", matchId),
@@ -75,6 +77,7 @@ export default async function MatchPage({
       supabase.from("team_form").select("*").eq("match_id", matchId),
       supabase.from("head_to_head").select("*").eq("match_id", matchId).maybeSingle(),
       supabase.from("market").select("market_code,label"),
+      supabase.from("match_stat").select("*").eq("match_id", matchId).maybeSingle(),
     ]);
 
   const fixture = fixtureRes.data as Fixture | null;
@@ -84,6 +87,7 @@ export default async function MatchPage({
   const prices = (priceRes.data ?? []) as MarketPrice[];
   const forms = (formRes.data ?? []) as TeamForm[];
   const h2h = h2hRes.data as HeadToHead | null;
+  const stat = statRes.data as MatchStat | null;
 
   const home = forms.find((f) => f.is_home);
   const away = forms.find((f) => !f.is_home);
@@ -152,6 +156,55 @@ export default async function MatchPage({
           </Link>
         </p>
       </header>
+
+      {stat && (
+        <section className="overflow-hidden rounded-lg border border-border bg-surface">
+          <header className="border-b border-border px-4 py-3">
+            <h2 className="text-sm font-medium">Match statistics</h2>
+            <p className="mt-0.5 text-xs text-muted">
+              What happened, not what was forecast. Rows the competition does not
+              record are left out rather than shown as zero.
+            </p>
+          </header>
+          <div className="divide-y divide-border">
+            <StatBar label="Shots" home={stat.home_shots} away={stat.away_shots} />
+            <StatBar
+              label="On target"
+              home={stat.home_shots_on_target}
+              away={stat.away_shots_on_target}
+            />
+            <StatBar
+              label="Inside box"
+              home={stat.home_shots_inside_box}
+              away={stat.away_shots_inside_box}
+            />
+            <StatBar
+              label="Expected goals"
+              home={stat.home_xg}
+              away={stat.away_xg}
+              decimals={2}
+            />
+            <StatBar
+              label="Possession"
+              home={stat.home_possession}
+              away={stat.away_possession}
+              suffix="%"
+            />
+            <StatBar label="Corners" home={stat.home_corners} away={stat.away_corners} />
+            <StatBar label="Fouls" home={stat.home_fouls} away={stat.away_fouls} />
+            <StatBar label="Offsides" home={stat.home_offsides} away={stat.away_offsides} />
+            <StatBar label="Yellow cards" home={stat.home_yellows} away={stat.away_yellows} />
+            <StatBar label="Red cards" home={stat.home_reds} away={stat.away_reds} />
+            <StatBar label="Passes" home={stat.home_passes} away={stat.away_passes} />
+            <StatBar
+              label="Accurate passes"
+              home={stat.home_passes_accurate}
+              away={stat.away_passes_accurate}
+            />
+            <StatBar label="Saves" home={stat.home_saves} away={stat.away_saves} />
+          </div>
+        </section>
+      )}
 
       {predictions.length === 0 ? (
         <p className="rounded-lg border border-border bg-surface p-6 text-sm text-muted">
