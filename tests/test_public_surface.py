@@ -27,6 +27,10 @@ from __future__ import annotations
 VIEWS = (
     "competition", "fixture", "market", "prediction", "market_price",
     "team_form", "head_to_head", "market_accuracy", "match_outcome",
+    # Descriptive rather than predictive: counts of what happened in matches a
+    # team played. Safe to publish for the opposite reason to the others — they
+    # contain no model output at all, only results that are already public.
+    "team_season_summary", "team_season_venue",
 )
 
 
@@ -67,29 +71,69 @@ def test_the_public_surface_is_exactly_the_intended_views(conn, scalar):
 
 
 def test_only_shipping_markets_are_published(conn, scalar):
-    held_or_rejected = scalar(
+    """Published in *this* competition, which is the rule that actually binds.
+
+    A market can be validated in England and unpublishable in Portugal, so the
+    global status is no longer sufficient: checking it would pass while Portugal
+    served numbers whose calibration was rejected.
+    """
+    not_shipping_here = scalar(
         """
         select count(*)
           from public.prediction p
-         where p.market_code in (
-                 select market_code from ml.market where status <> 'shipping'
-               )
+          join core.match m on m.match_id = p.match_id
+          left join ml.market_competition mc
+                 on mc.market_code = p.market_code
+                and mc.competition_id = m.competition_id
+         where mc.status is distinct from 'shipping'
         """
     )
-    assert held_or_rejected == 0
+    assert not_shipping_here == 0
 
 
-def test_the_market_list_matches_the_registry(conn, scalar):
-    mismatched = scalar(
+def test_no_competition_publishes_a_market_it_has_not_earned(conn, scalar):
+    """Absence must mean no.
+
+    The dangerous failure is a competition with no row at all quietly inheriting
+    the global verdict, which is how eight leagues would appear on the site
+    having never been measured.
+    """
+    unearned = scalar(
         """
         select count(*) from (
-          select market_code from public.market
+          select market_code, competition_code from public.market
           except
-          select market_code from ml.market where status = 'shipping'
+          select mc.market_code, c.code
+            from ml.market_competition mc
+            join core.competition c using (competition_id)
+           where mc.status = 'shipping'
         ) x
         """
     )
-    assert mismatched == 0
+    assert unearned == 0
+
+
+def test_the_original_five_still_serve_what_they_did(conn, scalar):
+    """The per-competition split had to be a no-op where the evidence came from.
+
+    Those five are where every global verdict was measured, so if the migration
+    changed what they publish, it changed a decision rather than relocating it.
+    """
+    changed = scalar(
+        """
+        select count(*) from (
+          select m.market_code
+            from ml.market m
+           where m.status = 'shipping'
+          except
+          select mc.market_code
+            from ml.market_competition mc
+            join core.competition c using (competition_id)
+           where c.code = 'ENG-PL' and mc.status = 'shipping'
+        ) x
+        """
+    )
+    assert changed == 0
 
 
 def test_no_raw_probability_is_exposed(conn, scalar):
