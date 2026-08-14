@@ -95,6 +95,7 @@ def run(
     refit_every_days: int = 14,
     min_train: int = 500,
     venue_penalty: float | None = None,
+    shrinkage: float = dc.SHRINKAGE,
 ) -> Scores:
     """Walk forward over [test_from, test_to).
 
@@ -137,6 +138,7 @@ def run(
                     days_ago,
                     xi=xi,
                     venue_penalty=venue_penalty,
+                    shrinkage=shrinkage,
                 )
                 last_fit = m.kickoff
 

@@ -298,6 +298,36 @@ It is history and not prediction — it makes no adjustment for the opponent —
 both the view comments and the page say so, because it is the easiest number here
 to misread as a forecast.
 
+## Shrinkage, found by looking at a page
+
+The Liga Portugal fixture list priced newly promoted Académico de Viseu at 89% to
+beat Santa Clara and 58% to beat Porto. No log-loss table said anything was wrong.
+
+Time decay was doing it. A match last week has weight 1.0 and one from 2014 has
+0.0004, so a promoted club's single game has full weight with nothing older to pull
+against it, and the fit explains that one game as well as it can. Académico de
+Viseu came out with a stronger attack than Benfica on 0.99 effective matches.
+
+Attack and defence are now shrunk toward the league average, scaled per effective
+match — the same treatment, for the same stated reason, that the count models
+already gave referee effects. Strength chosen on 2022-24 and confirmed on 2024-26,
+which was not used to choose it: it improves eight of the nine leagues with odds
+and costs England 0.0007, England having the most history and least turnover and so
+the least to gain. The optimum is interior, so it is a minimum rather than the edge
+of the range searched. `docs/10-strength-shrinkage.md` has the tables.
+
+Viseu's attack went from +1.18 to +0.35 while Porto's moved +0.51 to +0.47, which
+is the test of whether a penalty is doing the right thing: barely touch the clubs
+with fifty effective matches, move the one with a single match a long way.
+
+Refitting also exposed a display bug worth recording. `ml.model` keeps every
+version deliberately — no silent retraining — and `public.prediction` was showing
+all of them, so changing the model duplicated 6,693 published rows and a match page
+listed "over 2.5" twice with two different percentages. The view now publishes the
+most recent version per market, with the complement rows derived after
+deduplication so an "under" can never be the complement of a different version's
+"over".
+
 ## Does it beat the bookmaker?
 
 No, and now that is measured in nine leagues rather than one. Walk-forward 1X2

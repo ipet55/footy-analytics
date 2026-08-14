@@ -50,6 +50,29 @@ export default async function Home({
   const fixtures = (upcoming.data ?? []) as Fixture[];
   const results = (played.data ?? []) as Fixture[];
 
+  // The match-result probabilities for everything on the page. Without them an
+  // upcoming fixture ends in a dash — the empty score column — which reads as
+  // "no prediction" when there are fifty of them one click away.
+  const shown = [...fixtures, ...results].map((f) => f.match_id);
+  const oddsRes = shown.length
+    ? await supabase
+        .from("prediction")
+        .select("match_id,selection,probability")
+        .eq("market_code", "goals_1x2")
+        .in("match_id", shown)
+    : { data: [] };
+
+  const outcome = new Map<number, Record<string, number>>();
+  for (const row of (oddsRes.data ?? []) as Array<{
+    match_id: number;
+    selection: string;
+    probability: number;
+  }>) {
+    const entry = outcome.get(row.match_id) ?? {};
+    entry[row.selection] = Number(row.probability);
+    outcome.set(row.match_id, entry);
+  }
+
   const served = [
     ...new Set(
       ((servedRes.data ?? []) as Array<{ competition_code: string }>).map(
@@ -95,9 +118,10 @@ export default async function Home({
           <FixtureGroups
             heading="Upcoming"
             fixtures={fixtures}
+            outcome={outcome}
             empty="No upcoming fixtures have predictions yet."
           />
-          <FixtureGroups heading="Results" fixtures={results} />
+          <FixtureGroups heading="Results" fixtures={results} outcome={outcome} />
         </div>
       )}
     </div>
@@ -107,10 +131,12 @@ export default async function Home({
 function FixtureGroups({
   heading,
   fixtures,
+  outcome,
   empty,
 }: {
   heading: string;
   fixtures: Fixture[];
+  outcome: Map<number, Record<string, number>>;
   empty?: string;
 }) {
   if (fixtures.length === 0) {
@@ -155,11 +181,13 @@ function FixtureGroups({
                       <span className="mx-2 text-muted">v</span>
                       <span className="font-medium">{m.away_team}</span>
                     </span>
-                    <span className="tnum text-sm text-muted">
-                      {m.home_goals_ft !== null && m.away_goals_ft !== null
-                        ? `${m.home_goals_ft}–${m.away_goals_ft}`
-                        : "—"}
-                    </span>
+                    {m.home_goals_ft !== null && m.away_goals_ft !== null ? (
+                      <span className="tnum text-sm">
+                        {m.home_goals_ft}–{m.away_goals_ft}
+                      </span>
+                    ) : (
+                      <Outcome probabilities={outcome.get(m.match_id)} />
+                    )}
                   </Link>
                 </li>
               ))}
@@ -168,6 +196,43 @@ function FixtureGroups({
         ))}
       </div>
     </section>
+  );
+}
+
+/** Home, draw and away as the model sees them, in the column a played match
+ *  uses for its score. Labelled so three bare numbers cannot be mistaken for
+ *  one, and the largest is emphasised because that is what the eye is after. */
+function Outcome({
+  probabilities,
+}: {
+  probabilities?: Record<string, number>;
+}) {
+  if (!probabilities) {
+    return <span className="text-xs text-muted">not priced</span>;
+  }
+  const cells: Array<[string, number | undefined]> = [
+    ["1", probabilities.home],
+    ["X", probabilities.draw],
+    ["2", probabilities.away],
+  ];
+  const best = Math.max(...cells.map(([, v]) => v ?? 0));
+  return (
+    <span className="flex shrink-0 items-center gap-2">
+      {cells.map(([label, value]) => (
+        <span key={label} className="flex w-12 flex-col items-end leading-tight">
+          <span className="text-[10px] uppercase tracking-widest text-muted">
+            {label}
+          </span>
+          <span
+            className={`tnum text-sm ${
+              value === best ? "font-medium text-foreground" : "text-muted"
+            }`}
+          >
+            {value === undefined ? "—" : `${Math.round(value * 100)}%`}
+          </span>
+        </span>
+      ))}
+    </span>
   );
 }
 

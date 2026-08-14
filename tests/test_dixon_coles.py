@@ -42,11 +42,19 @@ def assert_gradient_close(analytic: np.ndarray, numeric: np.ndarray) -> None:
 
 
 @pytest.mark.parametrize("rho", [-0.12, -0.05, 0.0, 0.08])
-def test_gradient_matches_finite_differences(rho):
+@pytest.mark.parametrize("shrinkage", [0.0, dc.SHRINKAGE, 0.2])
+def test_gradient_matches_finite_differences(rho, shrinkage):
     """Checked at several rho, including zero, because the correction's
-    derivative vanishes there and a sign error would hide."""
+    derivative vanishes there and a sign error would hide.
+
+    And at several shrinkage strengths, including zero. The penalty's derivative
+    has to travel through the sum-to-zero constraint on attack — the pinned
+    team's parameter is minus the sum of the others, so its share of the penalty
+    reaches every free one with the opposite sign. Getting that wrong does not
+    raise; it just fits a slightly different model than the one written down.
+    """
     home, away, hg, ag, days_ago = synthetic()
-    d = dc.build_design(home, away, hg, ag, days_ago)
+    d = dc.build_design(home, away, hg, ag, days_ago, shrinkage=shrinkage)
     n = d.n_teams
 
     params = np.concatenate([

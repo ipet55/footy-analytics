@@ -39,6 +39,14 @@ from scipy.stats import poisson
 
 MAX_GOALS = 10
 
+# How hard attack and defence are pulled toward the league average, per effective
+# match. Chosen on 2022-24 across nine leagues and confirmed on 2024-26, which was
+# not used to choose it: it improves eight of the nine and costs England 0.0007.
+# The optimum is interior — 0.20 and 0.40 are both worse — so this is a minimum
+# rather than the edge of the range that happened to be searched.
+# docs/10-strength-shrinkage.md has the tables.
+SHRINKAGE = 0.10
+
 
 @dataclass
 class Fitted:
@@ -135,6 +143,11 @@ class Design:
     # None fits one home advantage for the league. A number adds a per-team
     # deviation on top and is the weight of the L2 penalty holding it down.
     venue_penalty: float | None = None
+    # Weight of the L2 penalty pulling attack and defence toward the league
+    # average. Scaled against the total time-decayed weight of the training set,
+    # so it means the same thing whether a league has 400 effective matches or
+    # 40, and so it does not quietly strengthen as history accumulates.
+    strength_penalty: float = 0.0
 
     @property
     def n_teams(self) -> int:
@@ -154,9 +167,15 @@ def build_design(
     days_ago: np.ndarray,
     xi: float = 0.0018,
     venue_penalty: float | None = None,
+    shrinkage: float = SHRINKAGE,
 ) -> Design:
     teams = sorted(set(home_ids.tolist()) | set(away_ids.tolist()))
     index = {team: i for i, team in enumerate(teams)}
+    weights = np.exp(-xi * np.asarray(days_ago, float))
+    # Expressed per effective match, so the penalty is the same strength in a
+    # league with a decade of history as in one with two seasons. A flat constant
+    # would shrink a short history hard and a long one not at all.
+    strength_penalty = shrinkage * float(weights.sum()) / max(len(teams), 1)
     return Design(
         teams=teams,
         index=index,
@@ -164,12 +183,13 @@ def build_design(
         away=np.array([index[t] for t in away_ids]),
         home_goals=np.asarray(home_goals, float),
         away_goals=np.asarray(away_goals, float),
-        weights=np.exp(-xi * days_ago),
+        weights=weights,
         m00=(home_goals == 0) & (away_goals == 0),
         m01=(home_goals == 0) & (away_goals == 1),
         m10=(home_goals == 1) & (away_goals == 0),
         m11=(home_goals == 1) & (away_goals == 1),
         venue_penalty=venue_penalty,
+        strength_penalty=strength_penalty,
     )
 
 
@@ -238,6 +258,19 @@ def objective(params: np.ndarray, d: Design) -> tuple[float, np.ndarray]:
         + np.log(tau)
     )
     value = float(-np.sum(d.weights * ll))
+    if d.strength_penalty:
+        # Shrink attack and defence toward the league average. Without this a
+        # promoted club is fitted almost entirely to its first match, because
+        # time decay gives a game played last week a weight of 1.0 against
+        # 0.0004 for one from 2014 — so a single recent win outweighs thousands
+        # of old matches and nothing pulls it back. Académico de Viseu came out
+        # with the strongest attack in Portugal, ahead of Benfica, on one game,
+        # and was priced to score 3.67 at home where Porto would score 1.88.
+        #
+        # The count models already shrink referee effects for the same reason,
+        # stated the same way: some officials appear a handful of times and their
+        # raw averages are noise.
+        value += d.strength_penalty * float(np.sum(attack**2) + np.sum(defence**2))
     if d.n_venue:
         value += d.venue_penalty * float(
             np.sum(venue_attack**2) + np.sum(venue_defence**2)
@@ -271,6 +304,14 @@ def objective(params: np.ndarray, d: Design) -> tuple[float, np.ndarray]:
         np.bincount(d.away, weights=gl, minlength=n)
         + np.bincount(d.home, weights=gm, minlength=n)
     )
+    if d.strength_penalty:
+        # d/d attack_i of penalty * sum(attack^2). The pinned team's parameter is
+        # -sum(the others), so its share of the penalty reaches every free one
+        # with the opposite sign — the same chain rule the likelihood term above
+        # applies to attack_grad.
+        pen = 2.0 * d.strength_penalty
+        attack_grad = attack_grad - pen * attack
+        defence_grad = defence_grad - pen * defence
     grad[: n - 1] = -(attack_grad[: n - 1] - attack_grad[n - 1])
     grad[n - 1 : 2 * n - 1] = -defence_grad
     if d.n_venue:
@@ -298,6 +339,7 @@ def fit(
     days_ago: np.ndarray,
     xi: float = 0.0018,
     venue_penalty: float | None = None,
+    shrinkage: float = SHRINKAGE,
 ) -> Fitted:
     """Maximum likelihood fit with exponential time decay.
 
@@ -307,9 +349,15 @@ def fit(
 
     venue_penalty turns on per-team home deviations and sets how hard they are
     shrunk. None leaves them out entirely.
+
+    shrinkage pulls attack and defence toward the league average, in proportion
+    to how little effective data a team has. Set it to zero for the unpenalised
+    maximum likelihood fit, which is what the model did before newly promoted
+    clubs turned out to be rated off a single match.
     """
     d = build_design(
-        home_ids, away_ids, home_goals, away_goals, days_ago, xi, venue_penalty
+        home_ids, away_ids, home_goals, away_goals, days_ago, xi, venue_penalty,
+        shrinkage,
     )
     n = d.n_teams
 
