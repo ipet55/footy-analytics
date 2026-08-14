@@ -79,10 +79,17 @@ def seed_teams(
         # Step two: an existing team whose normalised name matches. Restricted to
         # clubs with no alias for this source yet, so an already-linked club is
         # never re-pointed at a namesake.
+        #
+        # `distinct on` because the name is not unique in core.team either — two
+        # clubs normalising to 'drita' would otherwise produce two alias rows for
+        # one provider id and violate the id constraint. Picking the lowest
+        # team_id is arbitrary but deterministic, which matters more: a re-run
+        # must reach the same answer as the first run.
         cur.execute(
             """
             insert into core.team_alias (team_id, source_id, source_team_id, alias_name)
-            select t.team_id, src.source_id, a.source_team_id, a.source_name
+            select distinct on (a.source_team_id)
+                   t.team_id, src.source_id, a.source_team_id, a.source_name
               from _af_team a
               join core.source src on src.code = %s
               join core.team t on core.norm_name(t.canonical_name)
@@ -91,6 +98,7 @@ def seed_teams(
                     select 1 from core.team_alias x
                      where x.source_id = src.source_id
                        and x.source_team_id = a.source_team_id)
+             order by a.source_team_id, t.team_id
             """,
             (SOURCE_CODE,),
         )
@@ -115,7 +123,8 @@ def seed_teams(
         cur.execute(
             """
             insert into core.team_alias (team_id, source_id, source_team_id, alias_name)
-            select t.team_id, src.source_id, a.source_team_id, a.source_name
+            select distinct on (a.source_team_id)
+                   t.team_id, src.source_id, a.source_team_id, a.source_name
               from _af_team a
               join core.source src on src.code = %s
               join core.team t on core.norm_name(t.canonical_name)
@@ -124,6 +133,7 @@ def seed_teams(
                     select 1 from core.team_alias x
                      where x.source_id = src.source_id
                        and x.source_team_id = a.source_team_id)
+             order by a.source_team_id, t.team_id
             """,
             (SOURCE_CODE,),
         )
@@ -259,6 +269,40 @@ def store_fixtures(
             """,
             (SOURCE_CODE,),
         )
+        # A row per team per match, carrying goals and nothing else, for every
+        # match written. Statistics arrive separately and are missing for a
+        # fifth of these competitions, and core.team_match is driven by this
+        # table — so without this a match with a known score but no statistics
+        # would be invisible to the feature layer, and a team's "last five
+        # matches" would silently skip it. Goals are known from the fixture, so
+        # there is no reason to lose them.
+        #
+        # Inserted before store_stats and never overwriting it: the statistics
+        # upsert coalesces, so real values land on top of these and nulls here
+        # never erase anything.
+        cur.execute(
+            """
+            insert into core.match_team_stat (
+                match_id, team_id, period, is_home, opponent_team_id,
+                goals, goals_conceded, source_id
+            )
+            select m.match_id, t.team_id, 'FT', t.is_home, t.opponent_id,
+                   t.goals, t.conceded, src.source_id
+              from _af_map am
+              join core.match m on m.match_id = am.match_id
+             cross join core.source src
+             cross join lateral (values
+                    (m.home_team_id, true,  m.away_team_id,
+                     m.home_goals_ft, m.away_goals_ft),
+                    (m.away_team_id, false, m.home_team_id,
+                     m.away_goals_ft, m.home_goals_ft)
+                 ) as t(team_id, is_home, opponent_id, goals, conceded)
+             where src.code = %s and m.home_goals_ft is not null
+            on conflict (match_id, team_id, period) do nothing
+            """,
+            (SOURCE_CODE,),
+        )
+
         cur.execute("select fixture_id, match_id from _af_map")
         mapping = dict(cur.fetchall())
         for table in ("_af_fixture", "_af_resolved", "_af_map"):
