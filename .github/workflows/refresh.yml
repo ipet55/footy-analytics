@@ -30,8 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+      DATABASE_URL: 'https://wziypmmboifdudvhhlmj.supabase.co'
+      API_FOOTBALL_KEY: 'bfe1fa0ec68ed8a18cfcd32a0d9ee420'
     steps:
       - uses: actions/checkout@v4
 
