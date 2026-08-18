@@ -131,6 +131,23 @@ export type MatchAbsence = {
   photo_url: string | null;
 };
 
+export type Transfer = {
+  team_id: number;
+  transfer_id: number;
+  player_id: number;
+  player_name: string;
+  photo_url: string | null;
+  moved_on: string;
+  direction: "in" | "out";
+  /** The club at the other end. A name rather than a link, because most of them
+   *  play outside the competitions held here. */
+  other_club: string | null;
+  other_team_id: number | null;
+  /** The provider's own word, unnormalised: Loan, Free, Transfer, N/A, and two
+   *  spellings of returning from a loan. Sometimes a fee. */
+  kind: string | null;
+};
+
 export type SquadPlayer = {
   team_id: number;
   team: string;

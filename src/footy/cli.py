@@ -570,6 +570,64 @@ def load_squads(
     )
 
 
+@app.command("load-transfers")
+def load_transfers(
+    competitions: str = typer.Option("", help="Comma-separated codes. All if omitted."),
+    season: int | None = typer.Option(None, help="Season whose clubs to load."),
+):
+    """Load transfers in and out for every club in a competition.
+
+    One request per club, returning that club's entire history rather than a
+    season's, so this is worth running rarely. Duplicate reports of the same move
+    are collapsed before they are stored — the feed republishes a transfer the
+    following day and a team page would otherwise list every signing twice.
+    """
+    from footy import maintain
+    from footy.load import api_football as af_load
+    from footy.sources import api_football as af
+
+    codes = [c.strip() for c in competitions.split(",") if c.strip()] or list(
+        af.LEAGUE_IDS
+    )
+    client = af.Client()
+    total = 0
+
+    for code in codes:
+        with db.connect() as conn:
+            year = season or maintain.current_season(conn, code)
+            provider_ids = [
+                int(r[0])
+                for r in db.fetch_all(
+                    conn,
+                    """
+                    select distinct ta.source_team_id
+                      from core.match m
+                      join core.competition c on c.competition_id = m.competition_id
+                      join core.season se on se.season_id = m.season_id
+                      join core.team t on t.team_id in (m.home_team_id, m.away_team_id)
+                      join core.team_alias ta on ta.team_id = t.team_id
+                      join core.source s on s.source_id = ta.source_id
+                                        and s.code = 'api_football'
+                     where c.code = %s and se.start_year = %s
+                       and ta.source_team_id is not null
+                    """,
+                    (code, year),
+                )
+            ]
+        if not provider_ids:
+            console.print(f"{code} {year}: [yellow]no clubs with a provider id[/yellow]")
+            continue
+
+        moves = list(af.transfers(client, provider_ids))
+        with db.connect() as conn:
+            written = af_load.store_transfers(conn, moves)
+            conn.commit()
+        total += written
+        console.print(f"{code} {year}: {len(provider_ids)} clubs, {written:,} moves")
+
+    console.print(f"\n[green]{total:,} transfers stored[/green]")
+
+
 @app.command("load-absences")
 def load_absences(
     days: int = typer.Option(5, help="How many days ahead to ask about."),

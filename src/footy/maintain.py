@@ -347,6 +347,19 @@ def refresh_squads(report: Report, weekday: int = 1) -> None:
         + (f", {created} new players" if created else "")
     )
 
+    # On the same weekly schedule and for the same reason: a club's transfer
+    # history is mostly settled, and the endpoint returns all of it rather than a
+    # window, so there is nothing to gain from asking twice a day.
+    try:
+        moves = list(af.transfers(client, provider_ids))
+    except Exception as exc:
+        report.add("transfers", str(exc)[:80], ok=False)
+        return
+    with db.connect() as conn:
+        n = af_load.store_transfers(conn, moves)
+        conn.commit()
+    report.add("transfers", f"{n:,} moves")
+
 
 def refresh_events(report: Report, limit: int = 400) -> None:
     """Minutes and team sheets for matches that do not have them yet.

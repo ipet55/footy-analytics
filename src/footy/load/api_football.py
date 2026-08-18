@@ -618,9 +618,17 @@ def _register_players(
     Idempotent through core.player_source: a provider id already registered is
     left alone rather than creating a second row for the same footballer.
     """
-    if not players:
+    # A nameless player is not a player. The transfer feed sends a few records
+    # with an id and no name, and core.player.canonical_name is not null, so
+    # without this the whole load fails on one bad row. Dropping it loses one
+    # transfer; letting it through loses the run.
+    rows = [
+        [str(pid), name.strip(), photo]
+        for pid, name, photo in players
+        if pid is not None and name and name.strip()
+    ]
+    if not rows:
         return 0
-    rows = [[str(pid), name, photo] for pid, name, photo in players]
     with conn.cursor() as cur:
         db.copy_into_temp(
             conn,
@@ -734,6 +742,73 @@ def store_squads(conn: psycopg.Connection, players: Iterable) -> tuple[int, int]
         written = cur.rowcount
         cur.execute("drop table _af_squad")
     return written, created
+
+
+def store_transfers(conn: psycopg.Connection, transfers: Iterable) -> int:
+    """Write moves, resolving both clubs where they are clubs we hold.
+
+    Upsert rather than replace. Unlike squads and absences, a transfer is a fact
+    about a past moment and does not stop being true — there is nothing to retract,
+    only corrections to the type or the resolved club.
+    """
+    # A move by a player the feed will not name cannot be displayed and cannot
+    # create a player row, so it is dropped here rather than at the insert.
+    transfers = [t for t in transfers if t.player_name]
+    if not transfers:
+        return 0
+
+    _register_players(conn, [(t.player_id, t.player_name, None) for t in transfers])
+    rows = [
+        [str(t.player_id), t.moved_on,
+         str(t.from_team_id) if t.from_team_id else None, t.from_name,
+         str(t.to_team_id) if t.to_team_id else None, t.to_name, t.kind]
+        for t in transfers
+    ]
+    with conn.cursor() as cur:
+        db.copy_into_temp(
+            conn,
+            "_af_transfer",
+            ["source_player_key", "moved_on", "from_source_id", "from_name",
+             "to_source_id", "to_name", "kind"],
+            rows,
+            """
+            create temporary table _af_transfer (
+                source_player_key text, moved_on date, from_source_id text,
+                from_name text, to_source_id text, to_name text, kind text
+            )
+            """,
+        )
+        cur.execute(
+            """
+            insert into core.transfer (
+                player_id, moved_on, from_team_id, from_name,
+                to_team_id, to_name, kind, source_id
+            )
+            select distinct on (ps.player_id, t.moved_on, t.from_name, t.to_name)
+                   ps.player_id, t.moved_on, fa.team_id, t.from_name,
+                   ta.team_id, t.to_name, t.kind, s.source_id
+              from _af_transfer t
+              join core.source s on s.code = %s
+              join core.player_source ps on ps.source_id = s.source_id
+                                        and ps.source_player_key = t.source_player_key
+              -- Left, because most moves involve a club outside these fourteen
+              -- competitions and the name alone is still worth showing.
+              left join core.team_alias fa on fa.source_id = s.source_id
+                                          and fa.source_team_id = t.from_source_id
+              left join core.team_alias ta on ta.source_id = s.source_id
+                                          and ta.source_team_id = t.to_source_id
+             order by ps.player_id, t.moved_on, t.from_name, t.to_name
+            on conflict (player_id, moved_on, from_name, to_name) do update
+                set kind         = excluded.kind,
+                    from_team_id = coalesce(excluded.from_team_id, core.transfer.from_team_id),
+                    to_team_id   = coalesce(excluded.to_team_id, core.transfer.to_team_id),
+                    updated_at   = now()
+            """,
+            (SOURCE_CODE,),
+        )
+        written = cur.rowcount
+        cur.execute("drop table _af_transfer")
+    return written
 
 
 def store_absences(

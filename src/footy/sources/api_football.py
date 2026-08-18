@@ -453,6 +453,98 @@ class Absence:
 ABSENCE_STATUS = {"missing fixture": "out", "questionable": "doubtful"}
 
 
+@dataclass(frozen=True)
+class Transfer:
+    """One move, in or out."""
+
+    player_id: int
+    player_name: str
+    moved_on: date
+    from_team_id: int | None
+    from_name: str | None
+    to_team_id: int | None
+    to_name: str | None
+    # The provider's own word: Loan, Free, Transfer, N/A — or, sometimes, a fee.
+    kind: str | None
+
+
+# How far apart two reports of the same move can be and still be the same move.
+# The feed republishes a transfer days after announcing it: Bruno Guimarães joining
+# Arsenal appears on both 6 and 7 August, and Illan Meslier's free transfer from
+# Leeds on both 29 June and 8 July. A week caught the first and missed the second.
+#
+# Two weeks is safe because the key already includes both clubs and the direction.
+# For this to collapse two real events, a player would have to move from one named
+# club to another named club, the same way round, twice inside a fortnight. Going
+# out on loan and coming back is the opposite direction and a different key.
+SAME_MOVE_DAYS = 14
+
+
+def transfers(client: Client, team_ids: Iterable[int]) -> Iterator[Transfer]:
+    """Every move into or out of a club, deduplicated.
+
+    One request per club, returning that club's whole history rather than a
+    season, so this is filtered where it is displayed rather than here.
+
+    Deduplication is the substance of this function. The same move is reported on
+    consecutive days, and without collapsing them a team page shows every summer
+    signing twice. Grouped by player and by the pair of clubs, keeping the latest
+    date within a week, because the later report is the confirmed one.
+    """
+    for team_id in team_ids:
+        rows: list[Transfer] = []
+        for record in client.get("/transfers", team=team_id):
+            player = record.get("player") or {}
+            if not player.get("id") or not player.get("name"):
+                continue
+            for move in record.get("transfers") or []:
+                raw = move.get("date")
+                if not raw:
+                    continue
+                try:
+                    moved_on = date.fromisoformat(raw)
+                except ValueError:
+                    continue
+                teams = move.get("teams") or {}
+                out, into = teams.get("out") or {}, teams.get("in") or {}
+                rows.append(Transfer(
+                    player_id=int(player["id"]),
+                    player_name=str(player["name"]).strip(),
+                    moved_on=moved_on,
+                    from_team_id=int(out["id"]) if out.get("id") else None,
+                    from_name=(str(out["name"]).strip() or None) if out.get("name") else None,
+                    to_team_id=int(into["id"]) if into.get("id") else None,
+                    to_name=(str(into["name"]).strip() or None) if into.get("name") else None,
+                    kind=(str(move["type"]).strip() or None) if move.get("type") else None,
+                ))
+        yield from _collapse(rows)
+
+
+def _collapse(rows: list[Transfer]) -> list[Transfer]:
+    """Drop a report when a later one describes the same move.
+
+    Grouped by player and by the pair of clubs, newest first, keeping a row only
+    when the one kept before it is more than SAME_MOVE_DAYS earlier. Chains
+    collapse to their latest link, which is the confirmed report.
+
+    The first attempt at this bucketed dates into fortnights and compared bucket
+    numbers, which is cheaper and wrong: two reports a day apart fall in different
+    buckets whenever they straddle a boundary, so Trossard to Beşiktaş survived
+    twice on 12 and 13 July. Comparing against the row actually kept has no
+    boundaries to straddle.
+    """
+    kept: list[Transfer] = []
+    last: dict[tuple[int, str, str], date] = {}
+    for row in sorted(rows, key=lambda t: t.moved_on, reverse=True):
+        key = (row.player_id, row.from_name or "", row.to_name or "")
+        previous = last.get(key)
+        if previous is not None and (previous - row.moved_on).days <= SAME_MOVE_DAYS:
+            continue
+        last[key] = row.moved_on
+        kept.append(row)
+    return kept
+
+
 def squads(client: Client, team_ids: Iterable[int]) -> Iterator[SquadPlayer]:
     """Current rosters, one request per club.
 

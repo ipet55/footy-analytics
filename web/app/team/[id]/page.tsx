@@ -2,12 +2,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { GoalTiming } from "@/components/GoalTiming";
 import { Squad } from "@/components/Squad";
+import { Transfers } from "@/components/Transfers";
 import { formatDateShort } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
 import {
   COMPETITIONS,
   type Fixture,
   type SquadPlayer,
+  type Transfer,
   type TeamSeasonFirst,
   type TeamSeasonLine,
   type TeamSeasonMeasure,
@@ -16,6 +18,13 @@ import {
 } from "@/lib/types";
 
 export const revalidate = 300;
+
+/** Transfers are shown from the opening of the current summer window rather than
+ *  from the season start, because the two differ by weeks and a signing made in
+ *  June is the news, not an omission. A fixed date rather than a rolling window:
+ *  "the last 90 days" would quietly empty the section by October. */
+const WINDOW_OPENED = "2026-06-01";
+const WINDOW_LABEL = "1 June 2026";
 
 const VENUES: Venue[] = ["overall", "home", "away"];
 const VENUE_LABEL: Record<Venue, string> = {
@@ -107,7 +116,7 @@ export default async function TeamPage({
     (r) => r.season === selected.season && r.competition_code === selected.competition
   );
 
-  const [lineRes, timingRes, firstRes, squadRes] = await Promise.all([
+  const [lineRes, timingRes, firstRes, squadRes, transferRes] = await Promise.all([
     supabase
       .from("team_season_line")
       .select("*")
@@ -131,11 +140,18 @@ export default async function TeamPage({
       .eq("venue", "overall")
       .maybeSingle(),
     supabase.from("squad").select("*").eq("team_id", teamId),
+    supabase
+      .from("transfer")
+      .select("*")
+      .eq("team_id", teamId)
+      .gte("moved_on", WINDOW_OPENED)
+      .order("moved_on", { ascending: false }),
   ]);
   const lines = (lineRes.data ?? []) as TeamSeasonLine[];
   const timing = (timingRes.data ?? []) as TeamSeasonTiming[];
   const first = firstRes.data as TeamSeasonFirst | null;
   const squad = (squadRes.data ?? []) as SquadPlayer[];
+  const transfers = (transferRes.data ?? []) as Transfer[];
 
   const measureAt = (measure: string, venue: Venue) =>
     measures.find((m) => m.measure === measure && m.venue === venue);
@@ -218,6 +234,8 @@ export default async function TeamPage({
       </p>
 
       <Squad players={squad} />
+
+      <Transfers rows={transfers} since={WINDOW_LABEL} />
 
       {(timing.length > 0 || first) && (
         <div className="grid gap-4 xl:grid-cols-2">
