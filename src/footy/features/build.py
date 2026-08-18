@@ -241,6 +241,10 @@ on conflict (match_id) do nothing
 # would show a season as finished several matches early and look entirely
 # plausible doing it.
 MATERIALIZED = (
+    # Settled outcomes. First, because the accuracy views and anything reading a
+    # prediction's `hit` are built on it, and a stale copy under-reports rather
+    # than erroring.
+    "ml.observation_mv",
     "core.market_1x2_mv",
     "core.market_ou25_mv",
     "public.team",

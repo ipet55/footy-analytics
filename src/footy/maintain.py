@@ -654,6 +654,26 @@ def freshness(max_result_age: int = 4, min_upcoming: int = 5) -> list[Check]:
             f"a league below 95% usually means a duplicate club: {', '.join(poor)}",
         ))
 
+        # Settlement stopped being automatic when observations were materialised
+        # for speed, so it has to be asserted. A stale copy does not error: the
+        # accuracy page simply shows fewer settled predictions than exist, which
+        # looks entirely plausible.
+        behind = db.fetch_one(
+            conn,
+            """
+            select count(*) from core.match m
+             where m.home_goals_ft is not null
+               and not exists (select 1 from ml.observation_mv o
+                                where o.match_id = m.match_id)
+            """,
+        )[0]
+        checks.append(Check(
+            "settled outcomes current",
+            "all" if behind == 0 else f"{behind} results unsettled",
+            behind == 0,
+            "ml.observation_mv has not been refreshed since results landed",
+        ))
+
         banded = db.fetch_one(
             conn, "select count(*) from public.team_season_timing"
         )[0]

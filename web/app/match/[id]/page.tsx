@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { MarketCard } from "@/components/MarketCard";
 import { Absences } from "@/components/Absences";
 import { Lineups } from "@/components/Lineups";
+import { Preview } from "@/components/Preview";
 import { StatBar } from "@/components/StatBar";
 import { Timeline } from "@/components/Timeline";
 import { formatDateLong } from "@/lib/format";
@@ -171,6 +172,16 @@ export default async function MatchPage({
           </Link>
         </p>
       </header>
+
+      {!played && (
+        <Preview
+          predictions={predictions}
+          absences={absences}
+          form={forms}
+          homeTeam={fixture.home_team}
+          awayTeam={fixture.away_team}
+        />
+      )}
 
       <Absences
         rows={absences}
