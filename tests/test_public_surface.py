@@ -38,6 +38,8 @@ VIEWS = (
     "team_season_timing", "team_season_first",
     # Squads, availability and movement. Descriptive, like the rest of this group.
     "squad", "match_absence", "transfer",
+    # The projected eleven, and the start counts behind it.
+    "expected_xi", "team_recent_starts",
 )
 
 

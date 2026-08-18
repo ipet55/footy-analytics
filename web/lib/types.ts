@@ -131,6 +131,21 @@ export type MatchAbsence = {
   photo_url: string | null;
 };
 
+export type ExpectedPlayer = {
+  match_id: number;
+  team_id: number;
+  is_home: boolean;
+  player_name: string;
+  position: string | null;
+  shirt_number: number | null;
+  starts: number;
+  named: number;
+  absence_status: "out" | "doubtful" | null;
+  absence_reason: string | null;
+  /** True for the eleven; the rest are the likeliest bench. */
+  expected_to_start: boolean;
+};
+
 export type Transfer = {
   team_id: number;
   transfer_id: number;

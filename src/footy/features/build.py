@@ -252,6 +252,9 @@ MATERIALIZED = (
     "public.team_season_line",
     "public.team_season_timing",
     "public.team_season_first",
+    # Feeds the expected eleven, so it has to be current before kickoff rather
+    # than merely eventually.
+    "public.team_recent_starts",
 )
 
 

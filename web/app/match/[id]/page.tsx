@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { MarketCard } from "@/components/MarketCard";
 import { Absences } from "@/components/Absences";
+import { ExpectedXI } from "@/components/ExpectedXI";
 import { Lineups } from "@/components/Lineups";
 import { Preview } from "@/components/Preview";
 import { StatBar } from "@/components/StatBar";
@@ -14,6 +15,7 @@ import {
   type HeadToHead,
   type Market,
   type MarketPrice,
+  type ExpectedPlayer,
   type MatchAbsence,
   type MatchEvent,
   type MatchLineup,
@@ -78,7 +80,7 @@ export default async function MatchPage({
 
   const [
     fixtureRes, predictionRes, priceRes, formRes, h2hRes, marketRes, statRes,
-    eventRes, lineupRes, absenceRes,
+    eventRes, lineupRes, absenceRes, expectedRes,
   ] = await Promise.all([
       supabase.from("fixture").select("*").eq("match_id", matchId).maybeSingle(),
       supabase.from("prediction").select("*").eq("match_id", matchId),
@@ -90,6 +92,7 @@ export default async function MatchPage({
       supabase.from("match_event").select("*").eq("match_id", matchId),
       supabase.from("match_lineup").select("*").eq("match_id", matchId),
       supabase.from("match_absence").select("*").eq("match_id", matchId),
+      supabase.from("expected_xi").select("*").eq("match_id", matchId),
     ]);
 
   const fixture = fixtureRes.data as Fixture | null;
@@ -103,6 +106,7 @@ export default async function MatchPage({
   const events = (eventRes.data ?? []) as MatchEvent[];
   const lineups = (lineupRes.data ?? []) as MatchLineup[];
   const absences = (absenceRes.data ?? []) as MatchAbsence[];
+  const expected = (expectedRes.data ?? []) as ExpectedPlayer[];
 
   const home = forms.find((f) => f.is_home);
   const away = forms.find((f) => !f.is_home);
@@ -189,6 +193,14 @@ export default async function MatchPage({
         awayTeam={fixture.away_team}
         played={played}
       />
+
+      {lineups.length === 0 && (
+        <ExpectedXI
+          rows={expected}
+          homeTeam={fixture.home_team}
+          awayTeam={fixture.away_team}
+        />
+      )}
 
       <Lineups
         rows={lineups}
