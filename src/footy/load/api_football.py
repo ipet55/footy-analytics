@@ -24,6 +24,7 @@ import psycopg
 from footy import db
 from footy.sources.api_football import (
     FINISHED,
+    POSTPONED,
     SCHEDULED,
     SOURCE_CODE,
     Fixture,
@@ -335,6 +336,39 @@ def store_fixtures(
         for table in ("_af_fixture", "_af_resolved", "_af_map"):
             cur.execute(f"drop table if exists {table}")
     return written, mapping
+
+
+def mark_postponed(conn: psycopg.Connection, fixtures: list[Fixture]) -> int:
+    """Record that a called-off match was called off.
+
+    Nothing wrote 'postponed' before, so a postponed fixture kept its original
+    date and the status 'scheduled' — indistinguishable, to any check asking
+    whether results arrive on time, from a result that failed to load. Braga
+    against Gil Vicente was called off on 16 August 2026 and the freshness check
+    reported a missing Portuguese result on every run until this existed.
+
+    Only ever moves a match away from 'scheduled'. A rearranged fixture that has
+    since been played arrives through the normal path with a score, and this must
+    not undo that.
+    """
+    called_off = [f.fixture_id for f in fixtures if f.status in POSTPONED]
+    if not called_off:
+        return 0
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            update core.match m
+               set status = 'postponed'
+              from core.match_source ms
+              join core.source s on s.source_id = ms.source_id and s.code = %s
+             where ms.match_id = m.match_id
+               and ms.source_match_id = any(%s)
+               and m.status = 'scheduled'
+               and m.home_goals_ft is null
+            """,
+            (SOURCE_CODE, [str(fid) for fid in called_off]),
+        )
+        return cur.rowcount
 
 
 def alias_teams(

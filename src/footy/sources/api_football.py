@@ -66,6 +66,12 @@ LEAGUE_IDS: dict[str, int] = {
 FINISHED = frozenset({"FT", "AET", "PEN"})
 # Codes meaning "has not been played and is still expected to be".
 SCHEDULED = frozenset({"TBD", "NS"})
+# Called off. Worth naming rather than lumping in with scheduled, because a
+# postponed match keeps its original date and so looks, to anything checking that
+# results arrive on time, exactly like a result that failed to load. That is not a
+# hypothetical: Braga against Gil Vicente was called off on 16 August 2026 and the
+# freshness check reported a missing result every run until this existed.
+POSTPONED = frozenset({"PST", "CANC", "ABD", "SUSP", "INT", "WO", "AWD"})
 
 # Competitions whose season label is the calendar year it was played in. Every
 # other one here is labelled by the year it started, which is also what

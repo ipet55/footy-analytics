@@ -222,7 +222,7 @@ def link_provider_ids(report: Report) -> None:
     from footy.load import api_football as af_load
 
     client = af.Client()
-    linked = unresolved = 0
+    linked = unresolved = called_off = 0
     with db.connect() as conn:
         seasons = {c: current_season(conn, c) for c in af.LEAGUE_IDS}
 
@@ -237,9 +237,13 @@ def link_provider_ids(report: Report) -> None:
             conn.commit()
             n, _ = af_load.link_fixtures(conn, code, year, fixtures)
             conn.commit()
+            called_off += af_load.mark_postponed(conn, fixtures)
+            conn.commit()
         linked += n
         unresolved += len(unmatched_clubs)
     detail = f"{linked} fixtures linked"
+    if called_off:
+        detail += f", {called_off} postponed"
     if unresolved:
         detail += f", {unresolved} clubs unresolved"
     report.add("link ids", detail)
@@ -490,7 +494,11 @@ def freshness(max_result_age: int = 4, min_upcoming: int = 5) -> list[Check]:
                    max(m.kickoff_date) filter (where m.home_goals_ft is not null),
                    count(*) filter (where m.status = 'scheduled'
                                       and m.kickoff_date >= current_date),
+                   -- A postponed match keeps its original date and will never
+                   -- have a score on it, so counting it here means reporting a
+                   -- missing result forever for a match that was never played.
                    count(*) filter (where m.home_goals_ft is null
+                                      and m.status <> 'postponed'
                                       and m.kickoff_date < current_date - 1)
               from core.match m
               join core.competition c using (competition_id)
