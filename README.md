@@ -34,7 +34,20 @@ The system Python on macOS is 3.9 and too old; `uv` installs an isolated 3.12.
 
 .venv/bin/footy predict --as-of 2026-05-01 --days 7   # store probabilities for fixtures
 .venv/bin/footy show-predictions --market corners_home
+
+.venv/bin/footy link-fixtures     # attach API-Football ids to matches another source owns
+.venv/bin/footy load-events       # goal, card and substitution minutes, and team sheets
+.venv/bin/footy load-squads       # current rosters, one request per club
+.venv/bin/footy load-absences     # who misses the coming fixtures, one request per date
+.venv/bin/footy load-transfers    # moves in and out
+
+.venv/bin/footy refresh           # a day's work: results in, features rebuilt, fixtures priced
+.venv/bin/footy freshness         # assert the data is current, and exit non-zero when it is not
 ```
+
+`refresh` runs the whole cycle in dependency order and is what a scheduler should
+call. `freshness` is what says whether it is actually working, because a job that
+has stopped running raises nothing at all.
 
 `predict` fits as of a date and predicts only what follows it. Pointing `--as-of`
 at a past matchday is how to check the output against results that are already
@@ -105,7 +118,7 @@ mistake. Details in `web/README.md`.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest        # 99 tests, ~35s
+.venv/bin/python -m pytest        # 121 tests, ~40s
 ```
 
 The model tests check the analytic gradients against finite differences, because
@@ -359,6 +372,41 @@ The timing views are regulation play only, and the timeline counts its own
 regulation goals and says so when they disagree with the result — because a page
 showing six goals above a 0-3 scoreline, unexplained, teaches a reader to distrust
 everything else on it.
+
+### Squads, absences and a projected eleven
+
+Who is at each club, who is missing the next match and why, and — until the real
+team sheet appears — who is likely to start. For all fourteen competitions, not
+just the five with the richest data.
+
+Absences turned out to be affordable everywhere because the provider's endpoint is
+scoped to a date rather than a league: one request covers every competition at
+once. They are stored per fixture rather than per player, because that is both how
+the source reports it and the honest shape — a player is doubtful for a match, not
+doubtful in general — as `out` or `doubtful`, keeping the provider's own reason.
+"Ribs Injury" beats a bucket of ours, and putting an open vocabulary into
+categories mostly produces wrong categories. Every load replaces a match's list, so
+a recovered player stops being listed rather than staying injured forever.
+
+Squads needed the player table opened up first. `core.player` had a global unique
+index on the normalised name, workable while one source wrote full names and
+broken the moment a second wrote abbreviations: of 88,523 names on team sheets,
+2,563 resolved to an existing player. FBref says Bukayo Saka and API-Football says
+B. Saka. Rather than pretend that gap is closed, the two populations are labelled
+by `origin` and kept apart, FBref keeping its name-uniqueness as a partial index
+over its own rows. The consequence is stated in the migration rather than hidden: a
+squad list does not yet join to per-player match statistics.
+
+The expected eleven is who has started most of a club's last ten team sheets, minus
+anyone reported out. No formation is solved for — ranking by starts cannot tell a
+full-back from a centre-half, and a tidier answer would not be a truer one.
+Doubtful players stay in and are marked, because a doubtful first choice is likelier
+to start than the twelfth man. Fenerbahce against Lyon showed it working: both
+senior goalkeepers injured, so the third choice comes up with two starts from five.
+
+Transfers are 131,700 moves, shown from the opening of the current window. The
+work there is deduplication — the feed republishes a move days after announcing it,
+so Bruno Guimarães joining Arsenal arrives on both 6 and 7 August.
 
 Player names on both tables are text beside a nullable `player_id`.
 `core.player.norm_name` is unique and these feeds bring in names from squads that
