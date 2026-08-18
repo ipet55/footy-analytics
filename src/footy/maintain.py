@@ -409,6 +409,38 @@ def refresh_events(report: Report, limit: int = 400) -> None:
     report.add("events", f"{len(mapping)} matches, {n_ev:,} events, {n_lu} lineups")
 
 
+def refresh_player_seasons(report: Report) -> None:
+    """Season totals for the competition currently being played.
+
+    Cheaper than it looks: one request per twenty players, and only the
+    in-progress season is asked for. Finished seasons do not move.
+    """
+    client = af.Client()
+    total = created = 0
+    try:
+        for code in af.LEAGUE_IDS:
+            with db.connect() as conn:
+                year = current_season(conn, code)
+            rows = list(af.player_seasons(client, code, year))
+            if not rows:
+                continue
+            with db.connect() as conn:
+                written, new, _missing = af_load.store_player_seasons(
+                    conn, code, year, rows
+                )
+                conn.commit()
+            total += written
+            created += new
+    except Exception as exc:
+        report.add("player stats", str(exc)[:80], ok=False)
+        return
+    report.add(
+        "player stats",
+        f"{total:,} player-seasons"
+        + (f", {created} new players" if created else ""),
+    )
+
+
 def rebuild_features(report: Report) -> None:
     """Feature layer and every materialized view.
 
@@ -474,6 +506,7 @@ def refresh(days: int = 21, season: int | None = None) -> Report:
     refresh_events(report)
     refresh_squads(report)
     refresh_absences(report)
+    refresh_player_seasons(report)
     rebuild_features(report)
     repredict(report, days)
     return report

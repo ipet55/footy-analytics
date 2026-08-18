@@ -1,3 +1,4 @@
+import { PlayerLink } from "@/components/PlayerLink";
 import type { MatchAbsence } from "@/lib/types";
 
 /** Who misses this match, and why, for both sides.
@@ -29,19 +30,18 @@ function Side({ rows, team }: { rows: MatchAbsence[]; team: string }) {
       {rows.length === 0 ? (
         <p className="mt-2 text-sm text-muted">Nothing reported.</p>
       ) : (
-        <ul className="mt-2 space-y-1">
+        <ul className="mt-2 space-y-1.5">
           {[...out, ...doubtful].map((r) => (
             <li
-              key={r.player_name}
-              className="flex items-baseline justify-between gap-3 text-sm"
+              key={r.player_id ?? r.player_name}
+              className="flex items-center justify-between gap-3 text-sm"
             >
-              <span
-                className={`truncate ${
-                  r.status === "out" ? "" : "text-muted"
-                }`}
-              >
-                {r.player_name}
-              </span>
+              <PlayerLink
+                id={r.player_id}
+                name={r.player_name}
+                photo={r.photo_url}
+                muted={r.status === "doubtful"}
+              />
               <span className="shrink-0 text-xs text-muted">
                 {r.reason ?? (r.status === "out" ? "Unavailable" : "Doubtful")}
                 {r.status === "doubtful" && r.reason ? " · doubtful" : ""}
@@ -76,7 +76,8 @@ export function Absences({
         <p className="mt-0.5 text-xs text-muted">
           Injuries and suspensions reported for this fixture. Published from about
           three days before kickoff, so an empty side means nothing has been
-          reported rather than everyone being fit.
+          reported rather than everyone being fit. Key absences are already
+          folded into the probabilities above.
         </p>
       </header>
       <div className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">

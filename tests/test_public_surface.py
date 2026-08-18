@@ -40,6 +40,9 @@ VIEWS = (
     "squad", "match_absence", "transfer",
     # The projected eleven, and the start counts behind it.
     "expected_xi", "team_recent_starts",
+    # Player pages, the key-player ranking, and the absence adjustment
+    # the published probabilities already include.
+    "player", "player_season_stat", "team_key_player", "match_effect",
 )
 
 

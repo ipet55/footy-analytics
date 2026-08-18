@@ -807,6 +807,70 @@ def load_events(
     )
 
 
+@app.command("load-player-stats")
+def load_player_stats(
+    competitions: str = typer.Option("", help="Comma-separated codes. All if omitted."),
+    from_year: int = typer.Option(2025, help="Earliest season starting year."),
+    to_year: int | None = typer.Option(None, help="Latest season. Current if omitted."),
+    season: int | None = typer.Option(None, help="Load only this starting year."),
+):
+    """Load per-player season totals from API-Football.
+
+    The feed that has shots, tackles, interceptions, fouls and recorded
+    minutes for every league we cover. One request per twenty players.
+    Safe to re-run: totals are upserted.
+    """
+    from footy import maintain
+    from footy.load import api_football as af_load
+    from footy.sources import api_football as af
+
+    codes = [c.strip() for c in competitions.split(",") if c.strip()] or list(
+        af.LEAGUE_IDS
+    )
+    unknown = [c for c in codes if c not in af.LEAGUE_IDS]
+    if unknown:
+        console.print(f"[red]no API-Football league id for: {', '.join(unknown)}[/red]")
+        raise typer.Exit(1)
+
+    client = af.Client()
+    total = created = unresolved = 0
+
+    for code in codes:
+        with db.connect() as conn:
+            latest = to_year or maintain.current_season(conn, code)
+        years = [season] if season is not None else [
+            y for y in range(from_year, latest + 1)
+        ]
+        for year in years:
+            try:
+                rows = list(af.player_seasons(client, code, year))
+            except Exception as exc:
+                console.print(f"{code} {year}: [red]{str(exc)[:120]}[/red]")
+                continue
+            if not rows:
+                console.print(f"{code} {year}: nothing published")
+                continue
+            with db.connect() as conn:
+                written, new, missing = af_load.store_player_seasons(
+                    conn, code, year, rows
+                )
+                conn.commit()
+            total += written
+            created += new
+            unresolved += missing
+            note = f", {new} new players" if new else ""
+            missing_note = f", {missing} clubs unresolved" if missing else ""
+            console.print(
+                f"{code} {year}: {written} player-seasons{note}{missing_note}"
+                f"  [dim](day remaining {client.day_remaining})[/dim]"
+            )
+
+    console.print(
+        f"\n[green]{total:,} player-seasons, {created} players created[/green]"
+        + (f", {unresolved} unresolved clubs" if unresolved else "")
+    )
+
+
 @app.command("load-calendar")
 def load_calendar(
     competitions: str = typer.Option(

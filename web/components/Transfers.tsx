@@ -1,3 +1,4 @@
+import { PlayerLink } from "@/components/PlayerLink";
 import type { Transfer } from "@/lib/types";
 
 /** Ins and outs, this window.
@@ -37,7 +38,11 @@ function Column({
           {rows.map((t) => (
             <li key={t.transfer_id} className="text-sm">
               <div className="flex items-baseline justify-between gap-3">
-                <span className="min-w-0 truncate">{t.player_name}</span>
+                <PlayerLink
+                  id={t.player_id}
+                  name={t.player_name}
+                  photo={t.photo_url}
+                />
                 <span className="shrink-0 text-xs text-muted">
                   {t.other_club ?? "—"}
                 </span>

@@ -85,8 +85,16 @@ class Fitted:
             float(np.exp(aa + dh + vd)),
         )
 
-    def score_matrix(self, home_team: int, away_team: int) -> np.ndarray:
+    def score_matrix(
+        self,
+        home_team: int,
+        away_team: int,
+        home_mult: float = 1.0,
+        away_mult: float = 1.0,
+    ) -> np.ndarray:
         lam, mu = self.rates(home_team, away_team)
+        lam *= home_mult
+        mu *= away_mult
         home = poisson.pmf(np.arange(MAX_GOALS + 1), lam)
         away = poisson.pmf(np.arange(MAX_GOALS + 1), mu)
         matrix = np.outer(home, away)

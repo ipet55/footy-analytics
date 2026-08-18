@@ -20,6 +20,9 @@ export type Fixture = {
   /** Known for about two thirds of played matches. The strongest single driver in
    *  the card models, and worth showing beside them for that reason. */
   referee: string | null;
+  competition_country: string | null;
+  home_logo_url: string | null;
+  away_logo_url: string | null;
 };
 
 export type Prediction = {
@@ -123,6 +126,7 @@ export type MatchAbsence = {
   team_id: number;
   team: string;
   is_home: boolean;
+  player_id: number | null;
   player_name: string;
   /** out is the provider's "Missing Fixture"; doubtful is its "Questionable". */
   status: "out" | "doubtful";
@@ -135,6 +139,7 @@ export type ExpectedPlayer = {
   match_id: number;
   team_id: number;
   is_home: boolean;
+  player_id: number | null;
   player_name: string;
   position: string | null;
   shirt_number: number | null;
@@ -142,8 +147,82 @@ export type ExpectedPlayer = {
   named: number;
   absence_status: "out" | "doubtful" | null;
   absence_reason: string | null;
+  photo_url: string | null;
   /** True for the eleven; the rest are the likeliest bench. */
   expected_to_start: boolean;
+};
+
+export type MatchEffect = {
+  match_id: number;
+  team_id: number;
+  team: string;
+  is_home: boolean;
+  attack_factor: number;
+  defence_factor: number;
+  missing_key: number;
+  detail: Array<{
+    player_id: number | null;
+    player_name: string;
+    status: string;
+    position: string | null;
+    goal_share: number;
+    minute_share: number;
+    attack_hit: number;
+    defence_hit: number;
+    is_key: boolean;
+  }>;
+  p_home_base: number | null;
+  p_draw_base: number | null;
+  p_away_base: number | null;
+};
+
+export type KeyPlayer = {
+  team_id: number;
+  player_id: number;
+  player_name: string;
+  photo_url: string | null;
+  position: string | null;
+  shirt_number: number | null;
+  appearances: number;
+  starts: number;
+  minutes: number;
+  goals: number;
+  assists: number;
+  rank: number;
+};
+
+export type Player = {
+  player_id: number;
+  player_name: string;
+  photo_url: string | null;
+  team_id: number | null;
+  team: string | null;
+  team_logo_url: string | null;
+  shirt_number: number | null;
+  position: string | null;
+  age: number | null;
+};
+
+export type PlayerSeasonStat = {
+  player_id: number;
+  team_id: number;
+  team: string;
+  competition_code: string;
+  season: string;
+  start_year: number;
+  appearances: number;
+  starts: number;
+  minutes: number;
+  goals: number;
+  assists: number;
+  shots: number | null;
+  shots_on_target: number | null;
+  tackles: number | null;
+  interceptions: number | null;
+  yellows: number;
+  reds: number;
+  fouls: number | null;
+  source: "appearance" | "event" | "api";
 };
 
 export type Transfer = {
@@ -190,6 +269,8 @@ export type MatchLineup = {
    *  in twelve, in which case the eleven is listed without lines. */
   position: string | null;
   is_starter: boolean;
+  player_id: number | null;
+  photo_url: string | null;
 };
 
 export type MatchEvent = {
@@ -237,6 +318,7 @@ export type Team = {
   team: string;
   team_short: string;
   country: string | null;
+  logo_url: string | null;
   matches: number;
   latest_season: string;
   latest_start_year: number;
