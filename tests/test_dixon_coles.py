@@ -160,6 +160,18 @@ def test_fit_recovers_a_positive_home_advantage():
     assert sum(fitted.attack.values()) == pytest.approx(0.0, abs=1e-6)
 
 
+def test_a_weaker_attack_shifts_probability_toward_the_other_side():
+    """The absence prior multiplies the fitted rates. A cut to the home
+    attack must lower the home win and raise the away win, or the
+    percentages on the page would move the wrong way."""
+    home, away, hg, ag, days_ago = synthetic()
+    fitted = dc.fit(home, away, hg, ag, days_ago)
+    base = dc.outcome_probabilities(fitted.score_matrix(0, 1))
+    cut = dc.outcome_probabilities(fitted.score_matrix(0, 1, home_mult=0.8))
+    assert cut[0] < base[0]
+    assert cut[2] > base[2]
+
+
 def test_score_matrix_is_a_distribution():
     home, away, hg, ag, days_ago = synthetic()
     fitted = dc.fit(home, away, hg, ag, days_ago)

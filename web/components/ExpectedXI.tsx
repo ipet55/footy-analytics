@@ -1,3 +1,4 @@
+import { PlayerLink } from "@/components/PlayerLink";
 import type { ExpectedPlayer } from "@/lib/types";
 
 /** The likely eleven, for the hours before the real one is published.
@@ -44,23 +45,19 @@ function Side({ rows, team }: { rows: ExpectedPlayer[]; team: string }) {
         {xi.map((r) => (
           <li
             key={r.player_name}
-            className="flex items-baseline gap-2 text-sm"
+            className="flex items-center gap-2 text-sm"
             title={r.absence_reason ?? undefined}
           >
             <span className="tnum w-6 shrink-0 text-right text-xs text-muted">
               {r.shirt_number ?? ""}
             </span>
-            <span
-              className={`min-w-0 flex-1 truncate ${
-                r.absence_status === "doubtful" ? "text-muted" : ""
-              }`}
-            >
-              {r.player_name}
-              {r.absence_status === "doubtful" && (
-                <span className="ml-1.5 text-[10px] uppercase tracking-wider">
-                  doubt
-                </span>
-              )}
+            <span className="min-w-0 flex-1">
+              <PlayerLink
+                id={r.player_id}
+                name={r.player_name}
+                photo={r.photo_url}
+                muted={r.absence_status === "doubtful"}
+              />
             </span>
             <span className="tnum shrink-0 text-xs text-muted">
               {r.starts}/{r.named}

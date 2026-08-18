@@ -1,3 +1,4 @@
+import { PlayerLink } from "@/components/PlayerLink";
 import type { MatchLineup } from "@/lib/types";
 
 /** Both team sheets side by side: the eleven, the bench, the formation, the coach.
@@ -26,12 +27,17 @@ function Sheet({ rows, label }: { rows: MatchLineup[]; label: string }) {
       .filter((r) => r.position === key)
       .sort((a, b) => (a.shirt_number ?? 99) - (b.shirt_number ?? 99));
 
-  const Player = ({ r }: { r: MatchLineup }) => (
-    <li className="flex items-baseline gap-2 py-0.5 text-sm">
+  const Player = ({ r, muted = false }: { r: MatchLineup; muted?: boolean }) => (
+    <li className="flex items-center gap-2 py-0.5 text-sm">
       <span className="tnum w-6 shrink-0 text-right text-xs text-muted">
         {r.shirt_number ?? ""}
       </span>
-      <span className="truncate">{r.player_name}</span>
+      <PlayerLink
+        id={r.player_id}
+        name={r.player_name}
+        photo={r.photo_url}
+        muted={muted}
+      />
     </li>
   );
 
@@ -81,15 +87,7 @@ function Sheet({ rows, label }: { rows: MatchLineup[]; label: string }) {
             {bench
               .sort((a, b) => (a.shirt_number ?? 99) - (b.shirt_number ?? 99))
               .map((r) => (
-                <li
-                  key={r.player_name}
-                  className="flex items-baseline gap-2 py-0.5 text-sm text-muted"
-                >
-                  <span className="tnum w-6 shrink-0 text-right text-xs">
-                    {r.shirt_number ?? ""}
-                  </span>
-                  <span className="truncate">{r.player_name}</span>
-                </li>
+                <Player key={r.player_name} r={r} muted />
               ))}
           </ul>
         </div>

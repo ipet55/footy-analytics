@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Badge } from "@/components/Badge";
+import { Flag } from "@/components/Flag";
 import { GoalTiming } from "@/components/GoalTiming";
+import { KeyPlayers } from "@/components/KeyPlayers";
 import { Squad } from "@/components/Squad";
 import { Transfers } from "@/components/Transfers";
 import { formatDateShort } from "@/lib/format";
@@ -8,7 +11,9 @@ import { supabase } from "@/lib/supabase";
 import {
   COMPETITIONS,
   type Fixture,
+  type KeyPlayer,
   type SquadPlayer,
+  type Team,
   type Transfer,
   type TeamSeasonFirst,
   type TeamSeasonLine,
@@ -116,7 +121,7 @@ export default async function TeamPage({
     (r) => r.season === selected.season && r.competition_code === selected.competition
   );
 
-  const [lineRes, timingRes, firstRes, squadRes, transferRes] = await Promise.all([
+  const [lineRes, timingRes, firstRes, squadRes, transferRes, keyRes, teamRes] = await Promise.all([
     supabase
       .from("team_season_line")
       .select("*")
@@ -146,12 +151,21 @@ export default async function TeamPage({
       .eq("team_id", teamId)
       .gte("moved_on", WINDOW_OPENED)
       .order("moved_on", { ascending: false }),
+    supabase
+      .from("team_key_player")
+      .select("*")
+      .eq("team_id", teamId)
+      .order("rank")
+      .limit(8),
+    supabase.from("team").select("*").eq("team_id", teamId).maybeSingle(),
   ]);
   const lines = (lineRes.data ?? []) as TeamSeasonLine[];
   const timing = (timingRes.data ?? []) as TeamSeasonTiming[];
   const first = firstRes.data as TeamSeasonFirst | null;
   const squad = (squadRes.data ?? []) as SquadPlayer[];
   const transfers = (transferRes.data ?? []) as Transfer[];
+  const keyPlayers = (keyRes.data ?? []) as KeyPlayer[];
+  const teamRow = teamRes.data as Team | null;
 
   const measureAt = (measure: string, venue: Venue) =>
     measures.find((m) => m.measure === measure && m.venue === venue);
@@ -191,13 +205,17 @@ export default async function TeamPage({
         ← All teams
       </Link>
 
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">{teamName}</h1>
-        <p className="mt-1 text-sm text-muted">
-          {COMPETITIONS[selected.competition] ?? selected.competition} ·{" "}
-          {selected.season} · {overall?.matches ?? 0} matches ·{" "}
-          {overall ? num(overall.points_per_game) : "—"} points per game
-        </p>
+      <header className="flex items-center gap-4">
+        <Badge src={teamRow?.logo_url ?? null} name={teamName} size={56} />
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">{teamName}</h1>
+          <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
+            <Flag competition={selected.competition} size={14} />
+            {COMPETITIONS[selected.competition] ?? selected.competition} ·{" "}
+            {selected.season} · {overall?.matches ?? 0} matches ·{" "}
+            {overall ? num(overall.points_per_game) : "—"} points per game
+          </p>
+        </div>
       </header>
 
       {periods.length > 1 && (
@@ -211,12 +229,13 @@ export default async function TeamPage({
                 href={`/team/${teamId}?competition=${encodeURIComponent(
                   p.competition
                 )}&season=${encodeURIComponent(p.season)}`}
-                className={`rounded-full border px-3 py-1 text-xs transition ${
+                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition ${
                   active
                     ? "border-accent/50 bg-accent/10 text-accent"
                     : "border-border bg-surface text-muted hover:text-foreground"
                 }`}
               >
+                <Flag competition={p.competition} size={12} />
                 {p.season}
                 <span className="ml-1.5 opacity-60">
                   {COMPETITIONS[p.competition] ?? p.competition}
@@ -232,6 +251,8 @@ export default async function TeamPage({
         account of who the opponent was, so a high rate here says nothing on its
         own about the next fixture — the probabilities on a match page do that.
       </p>
+
+      <KeyPlayers players={keyPlayers} />
 
       <Squad players={squad} />
 

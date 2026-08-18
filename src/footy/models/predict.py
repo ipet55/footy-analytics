@@ -34,12 +34,18 @@ import numpy as np
 import psycopg
 
 from footy import db
+from footy.models import absence
 from footy.models import backtest as goals_backtest
 from footy.models import calibration as cal
 from footy.models import counts as cm
 from footy.models import counts_backtest as cbt
 from footy.models import dixon_coles as dc
 from footy.models import publish
+
+# Count stats whose rates move with the same attack/defence shock as goals.
+# Cards and fouls stay with the referee: folding a missing striker into them
+# would be a story we cannot defend.
+ABSENCE_COUNT_STATS = frozenset({"shots", "corners"})
 
 # Goal lines worth pricing. The count models carry their own lines in CountSpec;
 # goals need theirs stated somewhere, and this is the set a football page
@@ -126,12 +132,19 @@ def _fit_goals(
 
 
 def _goals_rows(
-    fitted: dc.Fitted, fixture: Fixture, markets: dict[str, publish.Market]
+    fitted: dc.Fitted,
+    fixture: Fixture,
+    markets: dict[str, publish.Market],
+    shock: absence.FixtureShock | None = None,
 ) -> list[publish.PredictionRow]:
     """Every goals market off one score matrix, which is what keeps them
     coherent: the 1X2, the totals, each side's goals and both-teams-to-score are
     all sums over the same distribution, so they cannot contradict each other."""
-    matrix = fitted.score_matrix(fixture.home_id, fixture.away_id)
+    home_mult = shock.home_rate_mult if shock is not None else 1.0
+    away_mult = shock.away_rate_mult if shock is not None else 1.0
+    matrix = fitted.score_matrix(
+        fixture.home_id, fixture.away_id, home_mult=home_mult, away_mult=away_mult
+    )
     rows: list[publish.PredictionRow] = []
 
     def add(code: str, line: float | None, selection: str, p: float) -> None:
@@ -184,11 +197,16 @@ def _count_rows(
     team: cm.FittedCount | None,
     markets: dict[str, publish.Market],
     recal: dict[tuple[str, float], cal.Recalibrator],
+    shock: absence.FixtureShock | None = None,
 ) -> tuple[list[publish.PredictionRow], list[publish.PredictionRow]]:
     """Rows for the direct-total model and the per-team model, kept apart
     because they are separate fits and each prediction must name its own."""
     total_rows: list[publish.PredictionRow] = []
     team_rows: list[publish.PredictionRow] = []
+    apply = spec.name in ABSENCE_COUNT_STATS and shock is not None
+    home_mult = shock.home_rate_mult if apply else 1.0
+    away_mult = shock.away_rate_mult if apply else 1.0
+    total_mult = (home_mult + away_mult) / 2.0 if apply else 1.0
 
     def build(code: str, scope: str, line: float, p_raw: float) -> publish.PredictionRow:
         adjust = recal.get((scope, line))
@@ -198,7 +216,9 @@ def _count_rows(
         )
 
     if total is not None and f"{spec.name}_total" in markets:
-        pmf = total.pmf(fixture.home_id, fixture.away_id, fixture.referee_id)
+        pmf = total.pmf(
+            fixture.home_id, fixture.away_id, fixture.referee_id, rate_mult=total_mult
+        )
         for line in spec.total_lines:
             total_rows.append(
                 build(f"{spec.name}_total", "total", line, cm.over_probability(pmf, line))
@@ -206,7 +226,11 @@ def _count_rows(
 
     if team is not None:
         home_pmf, away_pmf = team.team_pmfs(
-            fixture.home_id, fixture.away_id, fixture.referee_id
+            fixture.home_id,
+            fixture.away_id,
+            fixture.referee_id,
+            home_mult=home_mult,
+            away_mult=away_mult,
         )
         for scope, pmf in (("home", home_pmf), ("away", away_pmf)):
             code = f"{spec.name}_{scope}"
@@ -269,6 +293,8 @@ def run(
         if not fixtures:
             return out
 
+        shocks = absence.load_shocks(conn, [f.match_id for f in fixtures])
+
         if goals:
             history = [
                 m for m in goals_backtest.load_matches(competition)
@@ -295,7 +321,14 @@ def run(
                 out.models += 1
                 rows: list[publish.PredictionRow] = []
                 for f in fixtures:
-                    rows.extend(_goals_rows(fitted, f, markets))
+                    shock = shocks.get(f.match_id)
+                    if shock is not None:
+                        base = fitted.score_matrix(f.home_id, f.away_id)
+                        h, d, a = dc.outcome_probabilities(base)
+                        shock.p_home_base = h
+                        shock.p_draw_base = d
+                        shock.p_away_base = a
+                    rows.extend(_goals_rows(fitted, f, markets, shock))
                 out.predictions += publish.upsert_predictions(conn, model_id, rows)
                 # No goals recalibration has been measured, so the identity is
                 # recorded rather than a correction invented. Dixon-Coles prices
@@ -373,6 +406,7 @@ def run(
                     fitted.total if total_model_id else None,
                     fitted.team if team_model_id else None,
                     markets, recal,
+                    shock=shocks.get(f.match_id),
                 )
                 all_total.extend(total_rows)
                 all_team.extend(team_rows)
@@ -400,6 +434,7 @@ def run(
                     recal,
                 )
 
+        absence.write_effects(conn, list(shocks.values()))
         conn.commit()
     return out
 

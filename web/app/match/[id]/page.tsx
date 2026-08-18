@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Badge } from "@/components/Badge";
+import { Flag } from "@/components/Flag";
 import { MarketCard } from "@/components/MarketCard";
 import { Absences } from "@/components/Absences";
 import { ExpectedXI } from "@/components/ExpectedXI";
@@ -17,6 +19,7 @@ import {
   type MarketPrice,
   type ExpectedPlayer,
   type MatchAbsence,
+  type MatchEffect,
   type MatchEvent,
   type MatchLineup,
   type MatchStat,
@@ -80,7 +83,7 @@ export default async function MatchPage({
 
   const [
     fixtureRes, predictionRes, priceRes, formRes, h2hRes, marketRes, statRes,
-    eventRes, lineupRes, absenceRes, expectedRes,
+    eventRes, lineupRes, absenceRes, expectedRes, effectRes,
   ] = await Promise.all([
       supabase.from("fixture").select("*").eq("match_id", matchId).maybeSingle(),
       supabase.from("prediction").select("*").eq("match_id", matchId),
@@ -93,6 +96,7 @@ export default async function MatchPage({
       supabase.from("match_lineup").select("*").eq("match_id", matchId),
       supabase.from("match_absence").select("*").eq("match_id", matchId),
       supabase.from("expected_xi").select("*").eq("match_id", matchId),
+      supabase.from("match_effect").select("*").eq("match_id", matchId),
     ]);
 
   const fixture = fixtureRes.data as Fixture | null;
@@ -107,6 +111,7 @@ export default async function MatchPage({
   const lineups = (lineupRes.data ?? []) as MatchLineup[];
   const absences = (absenceRes.data ?? []) as MatchAbsence[];
   const expected = (expectedRes.data ?? []) as ExpectedPlayer[];
+  const effects = (effectRes.data ?? []) as MatchEffect[];
 
   const home = forms.find((f) => f.is_home);
   const away = forms.find((f) => !f.is_home);
@@ -133,16 +138,23 @@ export default async function MatchPage({
       </Link>
 
       <header className="rounded-lg border border-border bg-surface p-6">
-        <p className="text-xs uppercase tracking-widest text-muted">
+        <p className="flex items-center gap-2 text-xs uppercase tracking-widest text-muted">
+          <Flag competition={fixture.competition_code} size={14} />
           {COMPETITIONS[fixture.competition_code] ?? fixture.competition_code} ·{" "}
           {fixture.season}
           {fixture.matchday ? ` · matchday ${fixture.matchday}` : ""}
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {fixture.home_team}
-            <span className="mx-3 text-muted">v</span>
-            {fixture.away_team}
+          <h1 className="flex flex-wrap items-center gap-x-3 text-2xl font-semibold tracking-tight">
+            <span className="inline-flex items-center gap-2">
+              <Badge src={fixture.home_logo_url} name={fixture.home_team} size={36} />
+              {fixture.home_team}
+            </span>
+            <span className="text-muted">v</span>
+            <span className="inline-flex items-center gap-2">
+              <Badge src={fixture.away_logo_url} name={fixture.away_team} size={36} />
+              {fixture.away_team}
+            </span>
           </h1>
           {played && (
             <span className="tnum rounded bg-surface-raised px-2.5 py-1 text-lg font-semibold">
@@ -181,6 +193,7 @@ export default async function MatchPage({
         <Preview
           predictions={predictions}
           absences={absences}
+          effects={effects}
           form={forms}
           homeTeam={fixture.home_team}
           awayTeam={fixture.away_team}

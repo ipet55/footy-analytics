@@ -1,3 +1,4 @@
+import { PlayerLink } from "@/components/PlayerLink";
 import type { SquadPlayer } from "@/lib/types";
 
 /** The club's current roster, grouped by line.
@@ -46,11 +47,11 @@ export function Squad({ players }: { players: SquadPlayer[] }) {
                 {line === "Attacker" ? "Attack" : line}
                 <span className="ml-1.5 tnum">{group.length}</span>
               </p>
-              <ul className="mt-1.5 space-y-0.5">
+              <ul className="mt-1.5 space-y-1">
                 {group.map((p) => (
                   <li
                     key={p.player_id}
-                    className="flex items-baseline gap-2 text-sm"
+                    className="flex items-center gap-2 text-sm"
                     title={
                       p.absence_reason
                         ? `${p.absence_reason} — ${p.absence_status}`
@@ -60,17 +61,13 @@ export function Squad({ players }: { players: SquadPlayer[] }) {
                     <span className="tnum w-6 shrink-0 text-right text-xs text-muted">
                       {p.shirt_number ?? ""}
                     </span>
-                    <span
-                      className={`min-w-0 flex-1 truncate ${
-                        p.absence_status === "out"
-                          ? "text-edge-negative line-through decoration-1"
-                          : p.absence_status === "doubtful"
-                            ? "text-muted"
-                            : ""
-                      }`}
-                    >
-                      {p.player_name}
-                    </span>
+                    <PlayerLink
+                      id={p.player_id}
+                      name={p.player_name}
+                      photo={p.photo_url}
+                      strike={p.absence_status === "out"}
+                      muted={p.absence_status === "doubtful"}
+                    />
                     {p.absence_status && (
                       <span className="shrink-0 text-[10px] uppercase tracking-wider text-muted">
                         {p.absence_status === "out" ? "out" : "?"}
@@ -89,13 +86,17 @@ export function Squad({ players }: { players: SquadPlayer[] }) {
           <p className="text-[10px] uppercase tracking-widest text-muted">
             Reported unavailable
           </p>
-          <ul className="mt-1.5 grid gap-x-6 gap-y-0.5 sm:grid-cols-2 xl:grid-cols-3">
+          <ul className="mt-1.5 grid gap-x-6 gap-y-1 sm:grid-cols-2 xl:grid-cols-3">
             {unavailable.map((p) => (
               <li
                 key={p.player_id}
-                className="flex items-baseline justify-between gap-3 text-sm"
+                className="flex items-center justify-between gap-3 text-sm"
               >
-                <span className="truncate">{p.player_name}</span>
+                <PlayerLink
+                  id={p.player_id}
+                  name={p.player_name}
+                  photo={p.photo_url}
+                />
                 <span className="shrink-0 text-xs text-muted">
                   {p.absence_reason ?? "Unavailable"}
                   {p.absence_status === "doubtful" ? " · doubtful" : ""}

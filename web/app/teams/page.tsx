@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { Badge } from "@/components/Badge";
+import { Flag } from "@/components/Flag";
 import { supabase } from "@/lib/supabase";
 import { COMPETITIONS, type Team } from "@/lib/types";
 
@@ -85,6 +87,7 @@ export default async function TeamsPage({
               query ? `&q=${encodeURIComponent(query)}` : ""
             }`}
             label={name}
+            competition={code}
           />
         ))}
       </nav>
@@ -107,8 +110,11 @@ export default async function TeamsPage({
                   href={`/team/${t.team_id}`}
                   className="block rounded-lg border border-border bg-surface px-4 py-3 transition hover:bg-surface-raised"
                 >
-                  <span className="block truncate text-sm font-medium">
-                    {t.team}
+                  <span className="flex items-center gap-2">
+                    <Badge src={t.logo_url} name={t.team} size={28} />
+                    <span className="block truncate text-sm font-medium">
+                      {t.team}
+                    </span>
                   </span>
                   <span className="mt-0.5 block truncate text-xs text-muted">
                     {t.country ?? "Europe"} · {t.matches} matches ·{" "}
@@ -134,20 +140,23 @@ function Chip({
   active,
   href,
   label,
+  competition,
 }: {
   active: boolean;
   href: string;
   label: string;
+  competition?: string;
 }) {
   return (
     <Link
       href={href}
-      className={`rounded-full border px-3 py-1 text-xs transition ${
+      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition ${
         active
           ? "border-accent/50 bg-accent/10 text-accent"
           : "border-border bg-surface text-muted hover:text-foreground"
       }`}
     >
+      {competition && <Flag competition={competition} size={12} />}
       {label}
     </Link>
   );

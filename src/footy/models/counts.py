@@ -124,7 +124,12 @@ class FittedCount:
     concede_default: float = 0.0
 
     def rates(
-        self, home_team: int, away_team: int, referee_id: int | None = None
+        self,
+        home_team: int,
+        away_team: int,
+        referee_id: int | None = None,
+        home_mult: float = 1.0,
+        away_mult: float = 1.0,
     ) -> tuple[float, float]:
         ref = self.referee.get(referee_id, 0.0) if referee_id is not None else 0.0
         home = np.exp(
@@ -136,15 +141,22 @@ class FittedCount:
             self.attack.get(away_team, self.attack_default)
             + self.concede.get(home_team, self.concede_default) + ref
         )
-        return float(home), float(away)
+        return float(home) * home_mult, float(away) * away_mult
 
     def pmf(self, rate: float) -> np.ndarray:
         return count_pmf(rate, self.dispersion)
 
     def team_pmfs(
-        self, home_team: int, away_team: int, referee_id: int | None = None
+        self,
+        home_team: int,
+        away_team: int,
+        referee_id: int | None = None,
+        home_mult: float = 1.0,
+        away_mult: float = 1.0,
     ) -> tuple[np.ndarray, np.ndarray]:
-        home_rate, away_rate = self.rates(home_team, away_team, referee_id)
+        home_rate, away_rate = self.rates(
+            home_team, away_team, referee_id, home_mult, away_mult
+        )
         return self.pmf(home_rate), self.pmf(away_rate)
 
     def total_pmf(
@@ -224,15 +236,27 @@ class FittedTotal:
     referee: dict[int, float] = field(default_factory=dict)
     n_matches: int = 0
 
-    def rate(self, home_team: int, away_team: int, referee_id: int | None = None) -> float:
+    def rate(
+        self,
+        home_team: int,
+        away_team: int,
+        referee_id: int | None = None,
+        rate_mult: float = 1.0,
+    ) -> float:
         ref = self.referee.get(referee_id, 0.0) if referee_id is not None else 0.0
         return float(np.exp(
             self.intercept + self.tempo.get(home_team, 0.0)
             + self.tempo.get(away_team, 0.0) + ref
-        ))
+        )) * rate_mult
 
-    def pmf(self, home_team: int, away_team: int, referee_id: int | None = None) -> np.ndarray:
-        rate = self.rate(home_team, away_team, referee_id)
+    def pmf(
+        self,
+        home_team: int,
+        away_team: int,
+        referee_id: int | None = None,
+        rate_mult: float = 1.0,
+    ) -> np.ndarray:
+        rate = self.rate(home_team, away_team, referee_id, rate_mult)
         k = np.arange(2 * MAX_COUNT + 1)
         if self.dispersion is None:
             log_p = k * np.log(rate) - rate - gammaln(k + 1)

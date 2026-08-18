@@ -255,6 +255,7 @@ MATERIALIZED = (
     # Feeds the expected eleven, so it has to be current before kickoff rather
     # than merely eventually.
     "public.team_recent_starts",
+    "public.player_season_stat",
 )
 
 

@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { Badge } from "@/components/Badge";
+import { Flag } from "@/components/Flag";
 import { formatDateShort } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
 import { COMPETITIONS, type Fixture } from "@/lib/types";
@@ -111,6 +113,7 @@ export default async function Home({
             active={competition === code}
             href={`/?competition=${encodeURIComponent(code)}`}
             label={COMPETITIONS[code] ?? code}
+            competition={code}
           />
         ))}
       </nav>
@@ -180,13 +183,22 @@ function FixtureGroups({
                     href={`/match/${m.match_id}`}
                     className="grid grid-cols-[auto_1fr_auto] items-center gap-4 px-4 py-3 transition hover:bg-surface-raised"
                   >
-                    <span className="w-24 shrink-0 text-xs text-muted">
-                      {COMPETITIONS[m.competition_code] ?? m.competition_code}
+                    <span className="flex w-28 shrink-0 items-center gap-1.5 text-xs text-muted">
+                      <Flag competition={m.competition_code} size={12} />
+                      <span className="truncate">
+                        {COMPETITIONS[m.competition_code] ?? m.competition_code}
+                      </span>
                     </span>
-                    <span className="min-w-0 truncate text-sm">
-                      <span className="font-medium">{m.home_team}</span>
+                    <span className="flex min-w-0 items-center truncate text-sm">
+                      <span className="inline-flex min-w-0 items-center gap-1.5 font-medium">
+                        <Badge src={m.home_logo_url} name={m.home_team} size={20} />
+                        <span className="truncate">{m.home_team}</span>
+                      </span>
                       <span className="mx-2 text-muted">v</span>
-                      <span className="font-medium">{m.away_team}</span>
+                      <span className="inline-flex min-w-0 items-center gap-1.5 font-medium">
+                        <Badge src={m.away_logo_url} name={m.away_team} size={20} />
+                        <span className="truncate">{m.away_team}</span>
+                      </span>
                     </span>
                     {m.home_goals_ft !== null && m.away_goals_ft !== null ? (
                       <span className="tnum text-sm">
@@ -253,20 +265,23 @@ function FilterChip({
   active,
   href,
   label,
+  competition,
 }: {
   active: boolean;
   href: string;
   label: string;
+  competition?: string;
 }) {
   return (
     <Link
       href={href}
-      className={`rounded-full border px-3 py-1 text-xs transition ${
+      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition ${
         active
           ? "border-accent/50 bg-accent/10 text-accent"
           : "border-border bg-surface text-muted hover:text-foreground"
       }`}
     >
+      {competition && <Flag competition={competition} size={12} />}
       {label}
     </Link>
   );

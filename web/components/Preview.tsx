@@ -1,4 +1,4 @@
-import type { MatchAbsence, Prediction, TeamForm } from "@/lib/types";
+import type { MatchAbsence, MatchEffect, Prediction, TeamForm } from "@/lib/types";
 
 /** The model's read on a match, in sentences.
  *
@@ -76,12 +76,14 @@ function describe(r: Prediction, home: string, away: string): string | null {
 export function Preview({
   predictions,
   absences,
+  effects,
   form,
   homeTeam,
   awayTeam,
 }: {
   predictions: Prediction[];
   absences: MatchAbsence[];
+  effects: MatchEffect[];
   form: TeamForm[];
   homeTeam: string;
   awayTeam: string;
@@ -190,16 +192,15 @@ export function Preview({
           </div>
         )}
 
-        {(homeOut > 0 || awayOut > 0) && (
-          <p className="text-muted">
-            {homeOut > 0 && `${homeTeam} are without ${homeOut} player${homeOut === 1 ? "" : "s"}`}
-            {homeOut > 0 && awayOut > 0 && " and "}
-            {awayOut > 0 && `${awayTeam} without ${awayOut}`}
-            . These probabilities do not know that: the model is fitted on results
-            and form, and absences are shown alongside for you to weigh, not folded
-            into the numbers.
-          </p>
-        )}
+        <AbsenceNote
+          effects={effects}
+          absences={absences}
+          predictions={predictions}
+          homeTeam={homeTeam}
+          awayTeam={awayTeam}
+          homeOut={homeOut}
+          awayOut={awayOut}
+        />
 
         {homeForm?.gf_10 != null &&
           homeForm.ga_10 != null &&
@@ -216,5 +217,82 @@ export function Preview({
           )}
       </div>
     </section>
+  );
+}
+
+function AbsenceNote({
+  effects,
+  absences,
+  predictions,
+  homeTeam,
+  awayTeam,
+  homeOut,
+  awayOut,
+}: {
+  effects: MatchEffect[];
+  absences: MatchAbsence[];
+  predictions: Prediction[];
+  homeTeam: string;
+  awayTeam: string;
+  homeOut: number;
+  awayOut: number;
+}) {
+  if (homeOut === 0 && awayOut === 0 && effects.length === 0) return null;
+
+  const names = (isHome: boolean) => {
+    const fromEffect = effects
+      .filter((e) => e.is_home === isHome)
+      .flatMap((e) => e.detail.filter((d) => d.is_key).map((d) => d.player_name));
+    if (fromEffect.length > 0) return fromEffect;
+    return absences
+      .filter((a) => a.is_home === isHome && a.status === "out")
+      .map((a) => a.player_name);
+  };
+  const homeNames = names(true);
+  const awayNames = names(false);
+
+  const base = effects.find((e) => e.p_home_base != null);
+  const now = Object.fromEntries(
+    predictions
+      .filter((p) => p.market_code === "goals_1x2")
+      .map((p) => [p.selection, Number(p.probability)])
+  ) as Record<string, number>;
+
+  const moved =
+    base &&
+    base.p_home_base != null &&
+    now.home != null &&
+    Math.abs(now.home - Number(base.p_home_base)) >= 0.01;
+
+  const side = (label: string, count: number, who: string[]) => {
+    if (count === 0) return null;
+    const listed = who.slice(0, 3).join(", ");
+    return `${label} are without ${count} player${count === 1 ? "" : "s"}${
+      listed ? ` (${listed}${who.length > 3 ? "…" : ""})` : ""
+    }`;
+  };
+
+  return (
+    <p className="text-muted">
+      {side(homeTeam, homeOut, homeNames)}
+      {homeOut > 0 && awayOut > 0 && " and "}
+      {side(awayTeam, awayOut, awayNames)}
+      {moved && base ? (
+        <>
+          . Those absences are in the percentages: {homeTeam} to win moved from{" "}
+          {pct(Number(base.p_home_base))} to {pct(now.home)}
+          {now.away != null && base.p_away_base != null && (
+            <>
+              , {awayTeam} from {pct(Number(base.p_away_base))} to {pct(now.away)}
+            </>
+          )}
+          .
+        </>
+      ) : effects.length > 0 ? (
+        ". Those absences are already folded into the percentages above."
+      ) : (
+        ". No key player among them, so the percentages did not move."
+      )}
+    </p>
   );
 }
