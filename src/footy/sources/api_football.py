@@ -160,6 +160,26 @@ class Client:
         self.session.headers.update({"x-apisports-key": api_key()})
 
     def get(self, path: str, **params: Any) -> list[dict]:
+        return self._request(path, **params).get("response") or []
+
+    def pages(self, path: str, **params: Any) -> Iterator[dict]:
+        """Walk every page of an endpoint that paginates.
+
+        /players is the one that needs this: twenty rows a page, thirty-odd
+        pages for a big league, and no bulk alternative. The other endpoints
+        used here return a season or a fixture in one shot.
+        """
+        page = 1
+        while True:
+            body = self._request(path, page=page, **params)
+            yield from body.get("response") or []
+            paging = body.get("paging") or {}
+            total = int(paging.get("total") or 1)
+            if page >= total:
+                return
+            page += 1
+
+    def _request(self, path: str, **params: Any) -> dict:
         for attempt in range(self.max_retries):
             self._pace()
             response = self.session.get(f"{BASE_URL}{path}", params=params, timeout=60)
@@ -175,7 +195,7 @@ class Client:
             # An empty list is the success case; anything else is not.
             if errors and not isinstance(errors, list):
                 raise ApiFootballError(f"{path} {params}: {errors}")
-            return body.get("response", [])
+            return body
         raise ApiFootballError(
             f"{path} {params}: still rate limited after {self.max_retries} attempts"
         )
@@ -570,6 +590,110 @@ def squads(client: Client, team_ids: Iterable[int]) -> Iterator[SquadPlayer]:
                     ),
                     photo_url=player.get("photo") or None,
                 )
+
+
+@dataclass(frozen=True)
+class PlayerSeason:
+    """One player's totals for one club in one competition-season."""
+
+    player_id: int
+    player_name: str
+    photo_url: str | None
+    team_id: int
+    appearances: int
+    starts: int
+    minutes: int
+    goals: int
+    assists: int
+    shots: int | None
+    shots_on_target: int | None
+    tackles: int | None
+    interceptions: int | None
+    fouls: int | None
+    yellows: int
+    reds: int
+
+
+def _as_int(value: Any, default: int | None = None) -> int | None:
+    number = _number(value)
+    if number is None:
+        return default
+    return int(number)
+
+
+def player_seasons_from_row(
+    row: dict, league_id: int, season: int
+) -> list[PlayerSeason]:
+    """Parse one /players response row into our season totals.
+
+    The feed misspells appearances and sends null for a count a player
+    recorded as zero (assists especially). Both are normalised here so the
+    loader can write integers without guessing.
+    """
+    player = row.get("player") or {}
+    if not player.get("id") or not player.get("name"):
+        return []
+    name = str(player["name"]).strip()
+    if not name:
+        return []
+    photo = player.get("photo") or None
+    out: list[PlayerSeason] = []
+    for stat in row.get("statistics") or []:
+        league = stat.get("league") or {}
+        if league.get("id") != league_id:
+            continue
+        if league.get("season") not in (season, None):
+            continue
+        team = stat.get("team") or {}
+        if not team.get("id"):
+            continue
+        games = stat.get("games") or {}
+        shots = stat.get("shots") or {}
+        goals = stat.get("goals") or {}
+        tackles = stat.get("tackles") or {}
+        fouls = stat.get("fouls") or {}
+        cards = stat.get("cards") or {}
+        appearances = _as_int(games.get("appearences"), 0) or 0
+        minutes = _as_int(games.get("minutes"), 0) or 0
+        if appearances == 0 and minutes == 0:
+            continue
+        yellowred = _as_int(cards.get("yellowred"), 0) or 0
+        red = _as_int(cards.get("red"), 0) or 0
+        out.append(
+            PlayerSeason(
+                player_id=int(player["id"]),
+                player_name=name,
+                photo_url=photo,
+                team_id=int(team["id"]),
+                appearances=appearances,
+                starts=_as_int(games.get("lineups"), 0) or 0,
+                minutes=minutes,
+                goals=_as_int(goals.get("total"), 0) or 0,
+                assists=_as_int(goals.get("assists"), 0) or 0,
+                shots=_as_int(shots.get("total")),
+                shots_on_target=_as_int(shots.get("on")),
+                tackles=_as_int(tackles.get("total")),
+                interceptions=_as_int(tackles.get("interceptions")),
+                fouls=_as_int(fouls.get("committed")),
+                yellows=_as_int(cards.get("yellow"), 0) or 0,
+                reds=red + yellowred,
+            )
+        )
+    return out
+
+
+def player_seasons(
+    client: Client, competition_code: str, start_year: int
+) -> Iterator[PlayerSeason]:
+    """Season totals for every player in one competition, paginated.
+
+    One request per twenty players. A Premier League season is about
+    thirty-five pages; the cups are larger because more clubs take part.
+    """
+    league_id = LEAGUE_IDS[competition_code]
+    season = season_for(competition_code, start_year)
+    for row in client.pages("/players", league=league_id, season=season):
+        yield from player_seasons_from_row(row, league_id, season)
 
 
 def absences(client: Client, day: date) -> Iterator[Absence]:

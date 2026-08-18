@@ -1057,6 +1057,7 @@ def store_lineups(
                     set shirt_number = excluded.shirt_number,
                         position     = excluded.position,
                         is_starter   = excluded.is_starter,
+                        player_id    = coalesce(excluded.player_id, core.match_lineup_player.player_id),
                         updated_at   = now()
                 """,
                 (SOURCE_CODE,),
@@ -1130,3 +1131,133 @@ def store_stats(
         written = cur.rowcount
         cur.execute("drop table _af_stat")
     return written
+
+
+def store_player_seasons(
+    conn: psycopg.Connection,
+    competition_code: str,
+    start_year: int,
+    rows: Iterable,
+) -> tuple[int, int, int]:
+    """Upsert season totals, resolving clubs and players by provider id.
+
+    A row whose club we do not hold is skipped rather than inventing a team:
+    that is how this source earned its merge migrations, and a season total
+    without a club we publish is not useful on a player page anyway.
+    """
+    rows = list(rows)
+    if not rows:
+        return 0, 0, 0
+
+    created = _register_players(
+        conn, [(r.player_id, r.player_name, r.photo_url) for r in rows]
+    )
+    payload = [
+        [
+            str(r.player_id),
+            str(r.team_id),
+            r.appearances,
+            r.starts,
+            r.minutes,
+            r.goals,
+            r.assists,
+            r.shots,
+            r.shots_on_target,
+            r.tackles,
+            r.interceptions,
+            r.fouls,
+            r.yellows,
+            r.reds,
+        ]
+        for r in rows
+    ]
+    with conn.cursor() as cur:
+        db.copy_into_temp(
+            conn,
+            "_af_pstat",
+            [
+                "source_player_key", "source_team_id", "appearances", "starts",
+                "minutes", "goals", "assists", "shots", "shots_on_target",
+                "tackles", "interceptions", "fouls", "yellows", "reds",
+            ],
+            payload,
+            """
+            create temporary table _af_pstat (
+                source_player_key text,
+                source_team_id text,
+                appearances smallint,
+                starts smallint,
+                minutes integer,
+                goals smallint,
+                assists smallint,
+                shots smallint,
+                shots_on_target smallint,
+                tackles smallint,
+                interceptions smallint,
+                fouls smallint,
+                yellows smallint,
+                reds smallint
+            )
+            """,
+        )
+        cur.execute(
+            """
+            insert into core.player_season (
+                player_id, team_id, competition_id, season_id,
+                appearances, starts, minutes, goals, assists,
+                shots, shots_on_target, tackles, interceptions, fouls,
+                yellows, reds, source_id
+            )
+            select distinct on (ps.player_id, ta.team_id)
+                   ps.player_id, ta.team_id, c.competition_id, se.season_id,
+                   q.appearances, q.starts, q.minutes, q.goals, q.assists,
+                   q.shots, q.shots_on_target, q.tackles, q.interceptions,
+                   q.fouls, q.yellows, q.reds, s.source_id
+              from _af_pstat q
+              join core.source s on s.code = %s
+              join core.player_source ps
+                on ps.source_id = s.source_id
+               and ps.source_player_key = q.source_player_key
+              join core.team_alias ta
+                on ta.source_id = s.source_id
+               and ta.source_team_id = q.source_team_id
+              join core.competition c on c.code = %s
+              join core.season se
+                on se.competition_id = c.competition_id
+               and se.start_year = %s
+             order by ps.player_id, ta.team_id
+            on conflict (player_id, team_id, competition_id, season_id)
+            do update set
+                appearances = excluded.appearances,
+                starts = excluded.starts,
+                minutes = excluded.minutes,
+                goals = excluded.goals,
+                assists = excluded.assists,
+                shots = excluded.shots,
+                shots_on_target = excluded.shots_on_target,
+                tackles = excluded.tackles,
+                interceptions = excluded.interceptions,
+                fouls = excluded.fouls,
+                yellows = excluded.yellows,
+                reds = excluded.reds,
+                source_id = excluded.source_id,
+                loaded_at = now()
+            """,
+            (SOURCE_CODE, competition_code, start_year),
+        )
+        written = cur.rowcount
+        cur.execute(
+            """
+            select count(distinct q.source_team_id)
+              from _af_pstat q
+              join core.source s on s.code = %s
+             where not exists (
+                    select 1 from core.team_alias ta
+                     where ta.source_id = s.source_id
+                       and ta.source_team_id = q.source_team_id)
+            """,
+            (SOURCE_CODE,),
+        )
+        unresolved = cur.fetchone()[0]
+        cur.execute("drop table _af_pstat")
+    return written, created, unresolved

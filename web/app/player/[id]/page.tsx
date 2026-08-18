@@ -8,8 +8,15 @@ import { COMPETITIONS, type Player, type PlayerSeasonStat } from "@/lib/types";
 
 export const revalidate = 300;
 
+const CUPS = new Set(["INT-UCL", "INT-UEL"]);
+
 function num(value: number | null) {
   return value === null ? "—" : value;
+}
+
+function per90(total: number | null, minutes: number) {
+  if (total === null || minutes <= 0) return "—";
+  return ((total * 90) / minutes).toFixed(2);
 }
 
 export default async function PlayerPage({
@@ -41,10 +48,19 @@ export default async function PlayerPage({
     ...new Map(
       stats.map((s) => [
         `${s.competition_code}|${s.season}`,
-        { competition: s.competition_code, season: s.season, year: s.start_year },
+        {
+          competition: s.competition_code,
+          season: s.season,
+          year: s.start_year,
+        },
       ])
     ).values(),
-  ];
+  ].sort(
+    (a, b) =>
+      b.year - a.year ||
+      Number(CUPS.has(a.competition)) - Number(CUPS.has(b.competition)) ||
+      a.competition.localeCompare(b.competition)
+  );
 
   return (
     <div className="space-y-8">
@@ -114,6 +130,10 @@ export default async function PlayerPage({
                         <th className="tnum px-3 py-2 text-right font-medium">G</th>
                         <th className="tnum px-3 py-2 text-right font-medium">A</th>
                         <th className="tnum px-3 py-2 text-right font-medium">Shots</th>
+                        <th className="tnum px-3 py-2 text-right font-medium">SOT</th>
+                        <th className="tnum px-3 py-2 text-right font-medium">Tkl</th>
+                        <th className="tnum px-3 py-2 text-right font-medium">Int</th>
+                        <th className="tnum px-3 py-2 text-right font-medium">Fouls</th>
                         <th className="tnum px-3 py-2 text-right font-medium">YC</th>
                         <th className="tnum px-3 py-2 text-right font-medium">RC</th>
                       </tr>
@@ -136,22 +156,77 @@ export default async function PlayerPage({
                             {s.goals}
                           </td>
                           <td className="tnum px-3 py-2 text-right">{s.assists}</td>
+                          <td className="tnum px-3 py-2 text-right">{num(s.shots)}</td>
                           <td className="tnum px-3 py-2 text-right">
-                            {num(s.shots)}
+                            {num(s.shots_on_target)}
                           </td>
+                          <td className="tnum px-3 py-2 text-right">{num(s.tackles)}</td>
+                          <td className="tnum px-3 py-2 text-right">
+                            {num(s.interceptions)}
+                          </td>
+                          <td className="tnum px-3 py-2 text-right">{num(s.fouls)}</td>
                           <td className="tnum px-3 py-2 text-right">{s.yellows}</td>
                           <td className="tnum px-3 py-2 text-right">{s.reds}</td>
                         </tr>
                       ))}
+                      {rows.map((s) =>
+                        s.minutes > 0 ? (
+                          <tr
+                            key={`${s.team_id}-p90`}
+                            className="text-muted"
+                          >
+                            <td className="px-4 py-2 text-xs">Per 90</td>
+                            <td className="tnum px-3 py-2 text-right text-xs">
+                              —
+                            </td>
+                            <td className="tnum px-3 py-2 text-right text-xs">
+                              —
+                            </td>
+                            <td className="tnum px-3 py-2 text-right text-xs">
+                              {s.appearances
+                                ? (s.minutes / s.appearances).toFixed(0)
+                                : "—"}
+                            </td>
+                            <td className="tnum px-3 py-2 text-right text-xs">
+                              {per90(s.goals, s.minutes)}
+                            </td>
+                            <td className="tnum px-3 py-2 text-right text-xs">
+                              {per90(s.assists, s.minutes)}
+                            </td>
+                            <td className="tnum px-3 py-2 text-right text-xs">
+                              {per90(s.shots, s.minutes)}
+                            </td>
+                            <td className="tnum px-3 py-2 text-right text-xs">
+                              {per90(s.shots_on_target, s.minutes)}
+                            </td>
+                            <td className="tnum px-3 py-2 text-right text-xs">
+                              {per90(s.tackles, s.minutes)}
+                            </td>
+                            <td className="tnum px-3 py-2 text-right text-xs">
+                              {per90(s.interceptions, s.minutes)}
+                            </td>
+                            <td className="tnum px-3 py-2 text-right text-xs">
+                              {per90(s.fouls, s.minutes)}
+                            </td>
+                            <td className="tnum px-3 py-2 text-right text-xs">
+                              {per90(s.yellows, s.minutes)}
+                            </td>
+                            <td className="tnum px-3 py-2 text-right text-xs">
+                              {per90(s.reds, s.minutes)}
+                            </td>
+                          </tr>
+                        ) : null
+                      )}
                     </tbody>
                   </table>
                 </div>
-                {rows.some((s) => s.source === "event") && (
-                  <p className="border-t border-border px-4 py-2 text-xs text-muted">
-                    Minutes are 90 per start; substitutes are not guessed. Shots
-                    and fouls are only stored where the richer match sheet exists.
-                  </p>
-                )}
+                <p className="border-t border-border px-4 py-2 text-xs text-muted">
+                  {rows.some((s) => s.source === "appearance")
+                    ? "Shots, tackles and interceptions come from the match sheet. Per 90 is the season total scaled to ninety minutes."
+                    : rows.some((s) => s.source === "api")
+                      ? "Season totals from the match provider, including recorded minutes. Per 90 is the season total scaled to ninety minutes."
+                      : "Minutes are 90 per start; substitutes are not guessed. Shots, tackles and fouls are only stored where a richer source exists."}
+                </p>
               </section>
             );
           })}

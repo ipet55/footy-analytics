@@ -217,10 +217,12 @@ export type PlayerSeasonStat = {
   assists: number;
   shots: number | null;
   shots_on_target: number | null;
+  tackles: number | null;
+  interceptions: number | null;
   yellows: number;
   reds: number;
   fouls: number | null;
-  source: "appearance" | "event";
+  source: "appearance" | "event" | "api";
 };
 
 export type Transfer = {
