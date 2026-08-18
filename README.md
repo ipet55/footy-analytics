@@ -8,11 +8,18 @@ Football data pipeline and prediction models for the top 5 European leagues,
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh   # if uv is not installed
 uv venv --python 3.12
-uv pip install -e .
+uv pip install -e '.[model,enrich,dev]'
 cp .env.example .env                              # then fill in DATABASE_URL
 ```
 
 The system Python on macOS is 3.9 and too old; `uv` installs an isolated 3.12.
+
+The extras are named optional and mostly are not. `model` holds numpy, scipy and
+scikit-learn, so without it every fit and every prediction fails; `enrich` holds
+soccerdata, needed for FBref; `dev` holds pytest. This line used to read
+`uv pip install -e .`, and the scheduled job copied it faithfully — then spent nine
+minutes loading data before dying on `No module named 'scipy'` at the prediction
+step. Install only the base if all you want is to load results.
 
 ## Commands
 

@@ -42,10 +42,17 @@ jobs:
       # Matches the setup in the README rather than `uv sync`: there is no
       # lockfile in the repository, and adding one here would leave CI installing
       # something different from every local checkout.
+      #
+      # The `model` extra is not optional for this job, whatever pyproject calls
+      # it. `footy refresh` ends by pricing fixtures, and the first run here spent
+      # nine minutes loading results, squads and absences before dying on
+      # `No module named 'scipy'` — the extra held numpy, scipy and scikit-learn,
+      # and a bare `pip install -e .` leaves all three out. Nothing failed until
+      # the very last step, which is the expensive way to find out.
       - name: Install
         run: |
           uv venv --python 3.12
-          uv pip install -e .
+          uv pip install -e '.[model]'
 
       - name: Refresh
         run: .venv/bin/footy refresh --days "${{ inputs.days || '21' }}"
