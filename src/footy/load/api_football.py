@@ -502,10 +502,14 @@ def link_fixtures(
     match means the team aliases are wrong, not that the fixtures are missing. That
     is how the split club identities in 0044 and 0045 were found.
     """
+    # Scheduled fixtures are linked too, not only played ones. Everything about a
+    # match before it kicks off — who is missing it, the confirmed team sheet an
+    # hour beforehand — is fetched by provider fixture id, so a match that gets its
+    # id only after the final whistle can never carry any of it.
     rows = [
         [f.fixture_id, f.kickoff_date, str(f.home_id), str(f.away_id)]
         for f in fixtures
-        if f.status in FINISHED
+        if f.status in FINISHED or f.status in SCHEDULED
     ]
     if not rows:
         return 0, 0
@@ -568,6 +572,198 @@ def link_fixtures(
     return linked, unmatched
 
 
+def _register_players(
+    conn: psycopg.Connection, players: list[tuple[int, str, str | None]]
+) -> int:
+    """Give this source's players rows of their own, keyed by provider id.
+
+    Not by name. FBref's population already occupies the name space with full
+    names and this source writes abbreviations, so matching the two is a separate
+    piece of work — `origin` keeps them apart and honest until it is done.
+
+    Idempotent through core.player_source: a provider id already registered is
+    left alone rather than creating a second row for the same footballer.
+    """
+    if not players:
+        return 0
+    rows = [[str(pid), name, photo] for pid, name, photo in players]
+    with conn.cursor() as cur:
+        db.copy_into_temp(
+            conn,
+            "_af_player",
+            ["source_player_key", "player_name", "photo_url"],
+            rows,
+            "create temporary table _af_player "
+            "(source_player_key text, player_name text, photo_url text)",
+        )
+        cur.execute(
+            """
+            insert into core.player (canonical_name, photo_url, origin)
+            select distinct on (p.source_player_key)
+                   p.player_name, p.photo_url, %s
+              from _af_player p
+              join core.source s on s.code = %s
+             where not exists (
+                    select 1 from core.player_source ps
+                     where ps.source_id = s.source_id
+                       and ps.source_player_key = p.source_player_key)
+             order by p.source_player_key
+            """,
+            (SOURCE_CODE, SOURCE_CODE),
+        )
+        created = cur.rowcount
+
+        # Link every unlinked id to the row just made for it. Matching on name
+        # within this source's own population is safe in a way that matching
+        # across sources is not: the names came from here in the first place.
+        cur.execute(
+            """
+            insert into core.player_source (player_id, source_id, source_player_key)
+            select distinct on (p.source_player_key)
+                   pl.player_id, s.source_id, p.source_player_key
+              from _af_player p
+              join core.source s on s.code = %s
+              join core.player pl on pl.origin = %s
+                                 and pl.norm_name = core.norm_name(p.player_name)
+             where not exists (
+                    select 1 from core.player_source ps
+                     where ps.source_id = s.source_id
+                       and ps.source_player_key = p.source_player_key)
+             order by p.source_player_key, pl.player_id
+            """,
+            (SOURCE_CODE, SOURCE_CODE),
+        )
+        cur.execute("drop table _af_player")
+    return created
+
+
+def store_squads(conn: psycopg.Connection, players: Iterable) -> tuple[int, int]:
+    """Replace each club's roster with what the provider now reports.
+
+    Delete-then-insert per club, because the endpoint describes today rather than
+    accumulating: a player who has left should disappear, and an upsert would keep
+    him forever. Only clubs actually returned are cleared, so a failed request
+    leaves the previous roster standing rather than emptying it.
+    """
+    players = list(players)
+    if not players:
+        return 0, 0
+
+    created = _register_players(
+        conn, [(p.player_id, p.name, p.photo_url) for p in players]
+    )
+    rows = [
+        [str(p.team_id), str(p.player_id), p.shirt_number, p.position, p.age]
+        for p in players
+    ]
+    with conn.cursor() as cur:
+        db.copy_into_temp(
+            conn,
+            "_af_squad",
+            ["source_team_id", "source_player_key", "shirt_number", "position", "age"],
+            rows,
+            """
+            create temporary table _af_squad (
+                source_team_id text, source_player_key text,
+                shirt_number smallint, position text, age smallint
+            )
+            """,
+        )
+        cur.execute(
+            """
+            delete from core.squad_member sm
+             where sm.team_id in (
+                select ta.team_id from _af_squad q
+                  join core.source s on s.code = %s
+                  join core.team_alias ta on ta.source_id = s.source_id
+                                         and ta.source_team_id = q.source_team_id)
+            """,
+            (SOURCE_CODE,),
+        )
+        cur.execute(
+            """
+            insert into core.squad_member (
+                team_id, player_id, shirt_number, position, age, source_id
+            )
+            select distinct on (ta.team_id, ps.player_id)
+                   ta.team_id, ps.player_id, q.shirt_number, q.position, q.age, s.source_id
+              from _af_squad q
+              join core.source s on s.code = %s
+              join core.team_alias ta on ta.source_id = s.source_id
+                                     and ta.source_team_id = q.source_team_id
+              join core.player_source ps on ps.source_id = s.source_id
+                                        and ps.source_player_key = q.source_player_key
+             order by ta.team_id, ps.player_id
+            """,
+            (SOURCE_CODE,),
+        )
+        written = cur.rowcount
+        cur.execute("drop table _af_squad")
+    return written, created
+
+
+def store_absences(
+    conn: psycopg.Connection, match_ids: dict[int, int], absences: Iterable
+) -> int:
+    """Who misses each fixture, replacing whatever was previously believed.
+
+    Replaced per match rather than merged, because availability changes right up
+    to kickoff and a player who has recovered must stop being listed. Merging
+    would leave him injured forever, which is the failure mode that makes this
+    kind of page untrustworthy.
+    """
+    absences = list(absences)
+    rows = [
+        [match_ids[a.fixture_id], str(a.team_id), str(a.player_id),
+         a.player_name, a.status, a.reason]
+        for a in absences
+        if a.fixture_id in match_ids
+    ]
+    if not rows:
+        return 0
+
+    _register_players(conn, [(a.player_id, a.player_name, None) for a in absences])
+    with conn.cursor() as cur:
+        db.copy_into_temp(
+            conn,
+            "_af_absence",
+            ["match_id", "source_team_id", "source_player_key", "player_name",
+             "status", "reason"],
+            rows,
+            """
+            create temporary table _af_absence (
+                match_id bigint, source_team_id text, source_player_key text,
+                player_name text, status text, reason text
+            )
+            """,
+        )
+        cur.execute(
+            "delete from core.match_absence where match_id in "
+            "(select distinct match_id from _af_absence)"
+        )
+        cur.execute(
+            """
+            insert into core.match_absence (
+                match_id, team_id, player_name, player_id, status, reason, source_id
+            )
+            select distinct on (a.match_id, ta.team_id, a.player_name)
+                   a.match_id, ta.team_id, a.player_name, ps.player_id,
+                   a.status, a.reason, s.source_id
+              from _af_absence a
+              join core.source s on s.code = %s
+              join core.team_alias ta on ta.source_id = s.source_id
+                                     and ta.source_team_id = a.source_team_id
+              left join core.player_source ps on ps.source_id = s.source_id
+                                             and ps.source_player_key = a.source_player_key
+             order by a.match_id, ta.team_id, a.player_name
+            """,
+            (SOURCE_CODE,),
+        )
+        written = cur.rowcount
+        cur.execute("drop table _af_absence")
+    return written
+
+
 def store_events(
     conn: psycopg.Connection, match_ids: dict[int, int], events: Iterable
 ) -> int:
@@ -579,6 +775,7 @@ def store_events(
     which it does — a goal reassigned after a VAR review changes the scorer, not
     the minute.
     """
+    events = list(events)
     rows = []
     for event in events:
         match_id = match_ids.get(event.fixture_id)
@@ -587,22 +784,28 @@ def store_events(
         rows.append([
             match_id, str(event.team_id), event.minute, event.extra_minute,
             event.kind, event.detail, event.player_name, event.assist_name,
+            str(event.player_id) if event.player_id is not None else None,
         ])
     if not rows:
         return 0
 
+    _register_players(
+        conn,
+        [(e.player_id, e.player_name, None)
+         for e in events if e.player_id is not None and e.player_name],
+    )
     with conn.cursor() as cur:
         db.copy_into_temp(
             conn,
             "_af_event",
             ["match_id", "source_team_id", "minute", "extra_minute", "kind",
-             "detail", "player_name", "assist_name"],
+             "detail", "player_name", "assist_name", "source_player_key"],
             rows,
             """
             create temporary table _af_event (
                 match_id bigint, source_team_id text, minute smallint,
                 extra_minute smallint, kind text, detail text,
-                player_name text, assist_name text
+                player_name text, assist_name text, source_player_key text
             )
             """,
         )
@@ -618,15 +821,18 @@ def store_events(
             )
             select e.match_id, ta.team_id, e.minute, e.extra_minute, e.kind,
                    e.detail, e.player_name, e.assist_name,
-                   -- Linked only when the name resolves to exactly one known
-                   -- player. A guess here would attach a goal to the wrong career.
-                   (select p.player_id from core.player p
-                     where p.norm_name = core.norm_name(e.player_name)),
+                   -- By provider id, not by name. Names stopped being unique the
+                   -- moment a second source started writing abbreviations of them,
+                   -- and a name lookup that matches two people attaches a goal to
+                   -- the wrong career — or, as it did here, fails the whole load.
+                   ps.player_id,
                    src.source_id
               from _af_event e
               join core.source src on src.code = %s
               join core.team_alias ta on ta.source_id = src.source_id
                                      and ta.source_team_id = e.source_team_id
+              left join core.player_source ps on ps.source_id = src.source_id
+                                             and ps.source_player_key = e.source_player_key
             """,
             (SOURCE_CODE,),
         )
@@ -688,22 +894,31 @@ def store_lineups(
         cur.execute("drop table _af_lineup")
 
         named = [
-            [match_ids[lu.fixture_id], str(lu.team_id), name, number, position, started]
+            [match_ids[lu.fixture_id], str(lu.team_id), name, number, position,
+             started, str(pid) if pid is not None else None]
             for lu in lineups
             if lu.fixture_id in match_ids
-            for name, number, position, started in lu.players
+            for name, number, position, started, pid in lu.players
         ]
         if named:
+            _register_players(
+                conn,
+                [(pid, name, None)
+                 for lu in lineups
+                 for name, _, _, _, pid in lu.players
+                 if pid is not None],
+            )
             db.copy_into_temp(
                 conn,
                 "_af_named",
                 ["match_id", "source_team_id", "player_name", "shirt_number",
-                 "position", "is_starter"],
+                 "position", "is_starter", "source_player_key"],
                 named,
                 """
                 create temporary table _af_named (
                     match_id bigint, source_team_id text, player_name text,
-                    shirt_number smallint, position text, is_starter boolean
+                    shirt_number smallint, position text, is_starter boolean,
+                    source_player_key text
                 )
                 """,
             )
@@ -716,12 +931,14 @@ def store_lineups(
                 select distinct on (p.match_id, ta.team_id, p.player_name)
                        p.match_id, ta.team_id, p.player_name, p.shirt_number,
                        p.position, p.is_starter,
-                       (select pl.player_id from core.player pl
-                         where pl.norm_name = core.norm_name(p.player_name))
+                       ps.player_id
                   from _af_named p
                   join core.source src on src.code = %s
                   join core.team_alias ta on ta.source_id = src.source_id
                                          and ta.source_team_id = p.source_team_id
+                  left join core.player_source ps
+                         on ps.source_id = src.source_id
+                        and ps.source_player_key = p.source_player_key
                   -- Only for sheets that were stored above; a player without a
                   -- lineup row would violate the composite foreign key.
                   join core.match_lineup ml on ml.match_id = p.match_id

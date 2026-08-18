@@ -118,6 +118,33 @@ export type MatchStat = {
   away_xg: number | null;
 };
 
+export type MatchAbsence = {
+  match_id: number;
+  team_id: number;
+  team: string;
+  is_home: boolean;
+  player_name: string;
+  /** out is the provider's "Missing Fixture"; doubtful is its "Questionable". */
+  status: "out" | "doubtful";
+  /** The provider's own wording — "Knee Injury", "Red Card" — not a bucket. */
+  reason: string | null;
+  photo_url: string | null;
+};
+
+export type SquadPlayer = {
+  team_id: number;
+  team: string;
+  player_id: number;
+  player_name: string;
+  photo_url: string | null;
+  shirt_number: number | null;
+  position: string | null;
+  age: number | null;
+  /** Set only when the player is reported missing his club's next fixture. */
+  absence_status: "out" | "doubtful" | null;
+  absence_reason: string | null;
+};
+
 export type MatchLineup = {
   match_id: number;
   team_id: number;

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { MarketCard } from "@/components/MarketCard";
+import { Absences } from "@/components/Absences";
 import { Lineups } from "@/components/Lineups";
 import { StatBar } from "@/components/StatBar";
 import { Timeline } from "@/components/Timeline";
@@ -12,6 +13,7 @@ import {
   type HeadToHead,
   type Market,
   type MarketPrice,
+  type MatchAbsence,
   type MatchEvent,
   type MatchLineup,
   type MatchStat,
@@ -75,7 +77,7 @@ export default async function MatchPage({
 
   const [
     fixtureRes, predictionRes, priceRes, formRes, h2hRes, marketRes, statRes,
-    eventRes, lineupRes,
+    eventRes, lineupRes, absenceRes,
   ] = await Promise.all([
       supabase.from("fixture").select("*").eq("match_id", matchId).maybeSingle(),
       supabase.from("prediction").select("*").eq("match_id", matchId),
@@ -86,6 +88,7 @@ export default async function MatchPage({
       supabase.from("match_stat").select("*").eq("match_id", matchId).maybeSingle(),
       supabase.from("match_event").select("*").eq("match_id", matchId),
       supabase.from("match_lineup").select("*").eq("match_id", matchId),
+      supabase.from("match_absence").select("*").eq("match_id", matchId),
     ]);
 
   const fixture = fixtureRes.data as Fixture | null;
@@ -98,6 +101,7 @@ export default async function MatchPage({
   const stat = statRes.data as MatchStat | null;
   const events = (eventRes.data ?? []) as MatchEvent[];
   const lineups = (lineupRes.data ?? []) as MatchLineup[];
+  const absences = (absenceRes.data ?? []) as MatchAbsence[];
 
   const home = forms.find((f) => f.is_home);
   const away = forms.find((f) => !f.is_home);
@@ -167,6 +171,13 @@ export default async function MatchPage({
           </Link>
         </p>
       </header>
+
+      <Absences
+        rows={absences}
+        homeTeam={fixture.home_team}
+        awayTeam={fixture.away_team}
+        played={played}
+      />
 
       <Lineups
         rows={lineups}

@@ -130,6 +130,13 @@ CANONICAL_NAME: dict[str, str] = {
     "FC Volendam": "Volendam",
     "Fatih Karagümrük": "Karagumruk",
     "Fatih Karagumruk": "Karagumruk",
+    # Promoted for 2026/27, and split in half on the day they arrived. This source
+    # abbreviates where API-Football does not, so each club was written twice and
+    # so was each of its fixtures. Caught by rest_days = 0 in the leakage tests —
+    # a side cannot play twice in a day — rather than by anything checking names.
+    "Dep. A Coruna": "Deportivo La Coruna",
+    "Santander": "Racing Santander",
+    "Corum": "Çorum FK",
 }
 
 # Short display name for compact UI, where the canonical name is unwieldy.

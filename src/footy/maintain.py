@@ -245,6 +245,105 @@ def link_provider_ids(report: Report) -> None:
     report.add("link ids", detail)
 
 
+def refresh_absences(report: Report, days: int = 5) -> None:
+    """Who is missing the coming fixtures, across every competition.
+
+    One request per date rather than per league, which is the only reason this is
+    affordable for fourteen competitions. The provider populates it about three
+    days out, so `days` is small on purpose: asking a fortnight ahead returns
+    nothing and spends a request finding that out.
+
+    Replaced per match rather than merged, inside the loader, because a recovered
+    player has to stop being listed.
+    """
+    from footy.load import api_football as af_load
+
+    client = af.Client()
+    with db.connect() as conn:
+        mapping = dict(
+            db.fetch_all(
+                conn,
+                """
+                select ms.source_match_id::bigint, ms.match_id
+                  from core.match_source ms
+                  join core.source s on s.source_id = ms.source_id
+                                    and s.code = 'api_football'
+                  join core.match m on m.match_id = ms.match_id
+                 where m.kickoff_date between current_date and current_date + %s
+                """,
+                (days,),
+            )
+        )
+
+    stored = 0
+    for offset in range(days + 1):
+        day = date.today() + timedelta(days=offset)
+        try:
+            rows = [a for a in af.absences(client, day) if a.fixture_id in mapping]
+        except Exception as exc:
+            report.add("absences", f"{day}: {str(exc)[:70]}", ok=False)
+            continue
+        if not rows:
+            continue
+        with db.connect() as conn:
+            stored += af_load.store_absences(conn, mapping, rows)
+            conn.commit()
+    report.add("absences", f"{stored} reported over the next {days} days")
+
+
+def refresh_squads(report: Report, weekday: int = 1) -> None:
+    """Rosters, once a week rather than twice a day.
+
+    A squad changes on transfer deadline day and almost never otherwise, while
+    costing one request per club — roughly 280 across the fourteen competitions.
+    Spending that twice daily to learn nothing would be the single largest waste
+    of the quota here.
+
+    Tuesday because the window shuts on a weekday and a Monday run would miss the
+    same day's business.
+    """
+    from footy.load import api_football as af_load
+
+    if date.today().weekday() != weekday:
+        report.add("squads", "skipped — refreshed weekly")
+        return
+
+    client = af.Client()
+    with db.connect() as conn:
+        provider_ids = [
+            int(r[0])
+            for r in db.fetch_all(
+                conn,
+                """
+                select distinct ta.source_team_id
+                  from core.match m
+                  join core.season se on se.season_id = m.season_id
+                  join core.team t on t.team_id in (m.home_team_id, m.away_team_id)
+                  join core.team_alias ta on ta.team_id = t.team_id
+                  join core.source s on s.source_id = ta.source_id
+                                    and s.code = 'api_football'
+                 where se.is_current and ta.source_team_id is not null
+                """,
+            )
+        ]
+    if not provider_ids:
+        report.add("squads", "no clubs with a provider id", ok=False)
+        return
+
+    try:
+        players = list(af.squads(client, provider_ids))
+    except Exception as exc:
+        report.add("squads", str(exc)[:80], ok=False)
+        return
+    with db.connect() as conn:
+        written, created = af_load.store_squads(conn, players)
+        conn.commit()
+    report.add(
+        "squads", f"{written:,} places across {len(provider_ids)} clubs"
+        + (f", {created} new players" if created else "")
+    )
+
+
 def refresh_events(report: Report, limit: int = 400) -> None:
     """Minutes and team sheets for matches that do not have them yet.
 
@@ -356,6 +455,8 @@ def refresh(days: int = 21, season: int | None = None) -> Report:
     refresh_api_leagues(report)
     link_provider_ids(report)
     refresh_events(report)
+    refresh_squads(report)
+    refresh_absences(report)
     rebuild_features(report)
     repredict(report, days)
     return report

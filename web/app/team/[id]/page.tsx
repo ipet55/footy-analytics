@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { GoalTiming } from "@/components/GoalTiming";
+import { Squad } from "@/components/Squad";
 import { formatDateShort } from "@/lib/format";
 import { supabase } from "@/lib/supabase";
 import {
   COMPETITIONS,
   type Fixture,
+  type SquadPlayer,
   type TeamSeasonFirst,
   type TeamSeasonLine,
   type TeamSeasonMeasure,
@@ -105,7 +107,7 @@ export default async function TeamPage({
     (r) => r.season === selected.season && r.competition_code === selected.competition
   );
 
-  const [lineRes, timingRes, firstRes] = await Promise.all([
+  const [lineRes, timingRes, firstRes, squadRes] = await Promise.all([
     supabase
       .from("team_season_line")
       .select("*")
@@ -128,10 +130,12 @@ export default async function TeamPage({
       .eq("season", selected.season)
       .eq("venue", "overall")
       .maybeSingle(),
+    supabase.from("squad").select("*").eq("team_id", teamId),
   ]);
   const lines = (lineRes.data ?? []) as TeamSeasonLine[];
   const timing = (timingRes.data ?? []) as TeamSeasonTiming[];
   const first = firstRes.data as TeamSeasonFirst | null;
+  const squad = (squadRes.data ?? []) as SquadPlayer[];
 
   const measureAt = (measure: string, venue: Venue) =>
     measures.find((m) => m.measure === measure && m.venue === venue);
@@ -212,6 +216,8 @@ export default async function TeamPage({
         account of who the opponent was, so a high rate here says nothing on its
         own about the next fixture — the probabilities on a match page do that.
       </p>
+
+      <Squad players={squad} />
 
       {(timing.length > 0 || first) && (
         <div className="grid gap-4 xl:grid-cols-2">

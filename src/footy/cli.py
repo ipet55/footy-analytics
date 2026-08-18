@@ -507,6 +507,128 @@ def freshness(
     console.print(f"\n[green]all {len(checks)} checks pass[/green]")
 
 
+@app.command("load-squads")
+def load_squads(
+    competitions: str = typer.Option("", help="Comma-separated codes. All if omitted."),
+    season: int | None = typer.Option(None, help="Season whose clubs to load."),
+):
+    """Load the current squad of every club in a competition.
+
+    One request per club, and the endpoint has no season: it describes the roster
+    today. Rosters are therefore replaced on each run rather than accumulated, so
+    a player who has left disappears instead of lingering.
+    """
+    from footy import maintain
+    from footy.load import api_football as af_load
+    from footy.sources import api_football as af
+
+    codes = [c.strip() for c in competitions.split(",") if c.strip()] or list(
+        af.LEAGUE_IDS
+    )
+    client = af.Client()
+    total = new_players = 0
+
+    for code in codes:
+        with db.connect() as conn:
+            year = season or maintain.current_season(conn, code)
+            provider_ids = [
+                int(r[0])
+                for r in db.fetch_all(
+                    conn,
+                    """
+                    select distinct ta.source_team_id
+                      from core.match m
+                      join core.competition c on c.competition_id = m.competition_id
+                      join core.season se on se.season_id = m.season_id
+                      join core.team t on t.team_id in (m.home_team_id, m.away_team_id)
+                      join core.team_alias ta on ta.team_id = t.team_id
+                      join core.source s on s.source_id = ta.source_id
+                                        and s.code = 'api_football'
+                     where c.code = %s and se.start_year = %s
+                       and ta.source_team_id is not null
+                    """,
+                    (code, year),
+                )
+            ]
+        if not provider_ids:
+            console.print(f"{code} {year}: [yellow]no clubs with a provider id[/yellow]")
+            continue
+
+        players = list(af.squads(client, provider_ids))
+        with db.connect() as conn:
+            written, created = af_load.store_squads(conn, players)
+            conn.commit()
+        total += written
+        new_players += created
+        console.print(
+            f"{code} {year}: {len(provider_ids)} clubs, {written} squad places"
+            + (f", {created} new players" if created else "")
+        )
+
+    console.print(
+        f"\n[green]{total:,} squad places, {new_players:,} players created[/green]"
+    )
+
+
+@app.command("load-absences")
+def load_absences(
+    days: int = typer.Option(5, help="How many days ahead to ask about."),
+    back: int = typer.Option(0, help="How many days behind as well."),
+):
+    """Load who is missing each upcoming fixture, across every competition.
+
+    One request per date covers every league at once, which is what makes this
+    affordable for fourteen competitions rather than five. The provider populates
+    it roughly three days before kickoff, so asking a fortnight ahead returns
+    nothing and costs a request to discover that.
+    """
+    from datetime import date as date_, timedelta
+
+    from footy.load import api_football as af_load
+    from footy.sources import api_football as af
+
+    client = af.Client()
+    with db.connect() as conn:
+        mapping = dict(
+            db.fetch_all(
+                conn,
+                """
+                select ms.source_match_id::bigint, ms.match_id
+                  from core.match_source ms
+                  join core.source s on s.source_id = ms.source_id
+                                    and s.code = 'api_football'
+                  join core.match m on m.match_id = ms.match_id
+                 where m.kickoff_date between current_date - %s and current_date + %s
+                """,
+                (back, days),
+            )
+        )
+
+    total = unmatched = 0
+    for offset in range(-back, days + 1):
+        day = date_.today() + timedelta(days=offset)
+        rows = list(af.absences(client, day))
+        if not rows:
+            continue
+        known = [a for a in rows if a.fixture_id in mapping]
+        unmatched += len(rows) - len(known)
+        with db.connect() as conn:
+            written = af_load.store_absences(conn, mapping, known)
+            conn.commit()
+        total += written
+        console.print(
+            f"{day}: {len(rows)} reported, {written} stored"
+            + (f", {len(rows) - len(known)} in competitions we do not hold"
+               if len(known) < len(rows) else "")
+        )
+
+    console.print(f"\n[green]{total:,} absences stored[/green]")
+    if unmatched:
+        console.print(
+            f"[dim]{unmatched:,} skipped — fixtures outside the fourteen competitions[/dim]"
+        )
+
+
 @app.command("link-fixtures")
 def link_fixtures(
     competitions: str = typer.Option(

@@ -36,6 +36,8 @@ VIEWS = (
     # everywhere, with no model output in them.
     "match_stat", "match_event", "match_lineup",
     "team_season_timing", "team_season_first",
+    # Squads and availability. Descriptive, like the rest of this group.
+    "squad", "match_absence",
 )
 
 

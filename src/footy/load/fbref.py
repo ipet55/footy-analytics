@@ -411,7 +411,11 @@ def store(
             """
             insert into core.player (canonical_name, first_seen_on, last_seen_on)
             values (%s, %s, %s)
-            on conflict (norm_name) do update
+            -- Name-uniqueness is now partial, covering only players this source
+            -- created, so the predicate has to be repeated for Postgres to match
+            -- the index. API-Football writes 'B. Saka' where this writes 'Bukayo
+            -- Saka'; without the split they would fight over one row.
+            on conflict (norm_name) where origin = 'fbref' do update
                 set first_seen_on = least(core.player.first_seen_on, excluded.first_seen_on),
                     last_seen_on  = greatest(core.player.last_seen_on, excluded.last_seen_on)
             """,

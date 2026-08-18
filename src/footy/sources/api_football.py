@@ -29,7 +29,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 import requests
 
@@ -323,6 +323,9 @@ class Event:
     detail: str | None
     player_name: str | None
     assist_name: str | None
+    # The provider's own player id. Carried so events resolve to a player the same
+    # way squads do, by id, rather than by a name that is no longer unique.
+    player_id: int | None
 
 
 @dataclass(frozen=True)
@@ -333,8 +336,8 @@ class Lineup:
     team_id: int
     formation: str | None
     coach_name: str | None
-    # (player name, shirt number, position, started)
-    players: tuple[tuple[str, int | None, str | None, bool], ...]
+    # (player name, shirt number, position, started, provider player id)
+    players: tuple[tuple[str, int | None, str | None, bool, int | None], ...]
 
 
 # API-Football's event vocabulary, mapped onto ours. Anything unrecognised becomes
@@ -370,6 +373,11 @@ def events(client: Client, fixture_ids: list[int]) -> Iterator[Event]:
                 detail=(str(row.get("detail")).strip() or None) if row.get("detail") else None,
                 player_name=((row.get("player") or {}).get("name") or None),
                 assist_name=((row.get("assist") or {}).get("name") or None),
+                player_id=(
+                    int((row.get("player") or {})["id"])
+                    if (row.get("player") or {}).get("id") is not None
+                    else None
+                ),
             )
 
 
@@ -384,7 +392,7 @@ def lineups(client: Client, fixture_ids: list[int]) -> Iterator[Lineup]:
             team = (row.get("team") or {}).get("id")
             if team is None:
                 continue
-            named: list[tuple[str, int | None, str | None, bool]] = []
+            named: list[tuple[str, int | None, str | None, bool, int | None]] = []
             for group, started in (("startXI", True), ("substitutes", False)):
                 for entry in row.get(group) or []:
                     p = entry.get("player") or {}
@@ -395,6 +403,7 @@ def lineups(client: Client, fixture_ids: list[int]) -> Iterator[Lineup]:
                         int(p["number"]) if p.get("number") is not None else None,
                         (str(p.get("pos")).strip() or None) if p.get("pos") else None,
                         started,
+                        int(p["id"]) if p.get("id") is not None else None,
                     ))
             yield Lineup(
                 fixture_id=fixture_id,
@@ -404,6 +413,91 @@ def lineups(client: Client, fixture_ids: list[int]) -> Iterator[Lineup]:
                 coach_name=((row.get("coach") or {}).get("name") or None),
                 players=tuple(named),
             )
+
+
+@dataclass(frozen=True)
+class SquadPlayer:
+    """One player on a club's current roster."""
+
+    team_id: int
+    player_id: int
+    name: str
+    age: int | None
+    shirt_number: int | None
+    position: str | None
+    photo_url: str | None
+
+
+@dataclass(frozen=True)
+class Absence:
+    """A player the provider says will miss, or may miss, one specific fixture."""
+
+    fixture_id: int
+    team_id: int
+    player_id: int
+    player_name: str
+    # 'out' or 'doubtful'.
+    status: str
+    reason: str | None
+
+
+# The provider's two words for availability. 'Missing Fixture' is definite and
+# 'Questionable' is not; anything else it invents is treated as doubtful, because
+# overstating a certainty is the worse of the two errors on a team sheet.
+ABSENCE_STATUS = {"missing fixture": "out", "questionable": "doubtful"}
+
+
+def squads(client: Client, team_ids: Iterable[int]) -> Iterator[SquadPlayer]:
+    """Current rosters, one request per club.
+
+    There is no season parameter: the endpoint describes the squad today. A player
+    sold in January is simply gone, so this is refreshed rather than accumulated.
+    """
+    for team_id in team_ids:
+        for row in client.get("/players/squads", team=team_id):
+            reported = (row.get("team") or {}).get("id")
+            for player in row.get("players") or []:
+                if not player.get("id") or not player.get("name"):
+                    continue
+                yield SquadPlayer(
+                    team_id=int(reported or team_id),
+                    player_id=int(player["id"]),
+                    name=str(player["name"]).strip(),
+                    age=int(player["age"]) if player.get("age") is not None else None,
+                    shirt_number=(
+                        int(player["number"]) if player.get("number") is not None else None
+                    ),
+                    position=(
+                        str(player["position"]).strip() if player.get("position") else None
+                    ),
+                    photo_url=player.get("photo") or None,
+                )
+
+
+def absences(client: Client, day: date) -> Iterator[Absence]:
+    """Everyone missing a fixture on one date, across every competition.
+
+    One request covers the whole day in every league the plan includes, which is
+    the reason this is affordable for fourteen competitions rather than five. The
+    data appears roughly three days before kickoff and not before, so asking about
+    next month returns nothing and costs a request to find out.
+    """
+    for row in client.get("/injuries", date=day.isoformat()):
+        player = row.get("player") or {}
+        fixture = (row.get("fixture") or {}).get("id")
+        team = (row.get("team") or {}).get("id")
+        if not player.get("id") or fixture is None or team is None:
+            continue
+        yield Absence(
+            fixture_id=int(fixture),
+            team_id=int(team),
+            player_id=int(player["id"]),
+            player_name=str(player.get("name") or "").strip(),
+            status=ABSENCE_STATUS.get(
+                str(player.get("type") or "").strip().lower(), "doubtful"
+            ),
+            reason=(str(player["reason"]).strip() or None) if player.get("reason") else None,
+        )
 
 
 def _number(value: Any) -> float | int | None:
